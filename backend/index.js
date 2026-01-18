@@ -21,26 +21,49 @@ const WebSocket = require("ws");
 const crypto = require("crypto");
 
 const wss = new WebSocket.Server({ port: 8080 });
-
 console.log("WebSocket server running on ws://localhost:8080");
 
 wss.on("connection", (ws) => {
-  const sessionId = crypto.randomUUID();
+  const session = {
+    id: crypto.randomUUID(),
+    state: "LISTENING",
+    audioChunks: []
+  };
 
-  console.log(`Client connected: ${sessionId}`);
+  console.log(`Client connected: ${session.id}`);
 
   ws.binaryType = "arraybuffer";
 
-  ws.on("message", (data) => {
-    const size = data.byteLength ?? data.length;
+  // Send initial state
+  ws.send(JSON.stringify({
+    type: "state",
+    value: session.state
+  }));
 
-    console.log(
-      `Session ${sessionId} | audio chunk bytes: ${size}`
-    );
+  ws.on("message", (data) => {
+    // Binary = audio
+    if (typeof data !== "string") {
+      if (session.state !== "LISTENING") return;
+      session.audioChunks.push(data);
+      return;
+    }
+
+    // JSON = control
+    const msg = JSON.parse(data);
+
+    if (msg.type === "user_stopped") {
+      session.state = "THINKING";
+      ws.send(JSON.stringify({ type: "state", value: "THINKING" }));
+    }
+
+    if (msg.type === "barge_in") {
+      session.state = "LISTENING";
+      session.audioChunks = [];
+      ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
+    }
   });
 
   ws.on("close", () => {
-    console.log(`Client disconnected: ${sessionId}`);
+    console.log(`Client disconnected: ${session.id}`);
   });
 });
-
