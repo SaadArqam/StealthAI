@@ -24,6 +24,7 @@ const wss = new WebSocket.Server({ port: 8080 });
 console.log("WebSocket server running on ws://localhost:8080");
 
 wss.on("connection", (ws) => {
+    
   const session = {
     id: crypto.randomUUID(),
     state: "LISTENING",
@@ -62,6 +63,17 @@ wss.on("connection", (ws) => {
       ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
     }
   });
+
+
+  setTimeout(() => {
+  ws.send(
+    JSON.stringify({
+      type: "state",
+      value: "THINKING",
+    })
+  );
+}, 3000);
+
 
   ws.on("close", () => {
     console.log(`Client disconnected: ${session.id}`);
