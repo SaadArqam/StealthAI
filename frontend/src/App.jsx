@@ -60,6 +60,22 @@ export default function App() {
 
 
       processor.onaudioprocess = (event) => {
+        
+        // speech detection logic
+        const now=performance.now();
+        if(!isSpeaking){
+          isSpeaking=true
+          console.log("Speaking Started")
+        }
+        lastSpeechTime=now;
+
+        // detecting silence
+        if(isSpeaking&&now-lastSpeechTime>TURN_END_DELAY){
+          console.log("User finished speaking")
+
+          isSpeaking=false;
+          socketRef.current.send(JSON.stringify({type:"user_stopped"}))
+        }
         if (
           socketRef.current?.readyState !== WebSocket.OPEN ||
           agentState !== "LISTENING"
@@ -82,13 +98,7 @@ export default function App() {
           return
         }
 
-        // speech detection logic
-        const now=performance.now();
-        if(!isSpeaking){
-          isSpeaking=true
-          console.log("Speaking Started")
-        }
-        lastSpeechTime=now;
+
 
       };
 
