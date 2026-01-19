@@ -7,18 +7,13 @@ function floatTo16BitPCM(float32Array) {
   let offset = 0;
   for (let i = 0; i < float32Array.length; i++, offset += 2) {
     let sample = Math.max(-1, Math.min(1, float32Array[i]));
-    view.setInt16(
-      offset,
-      sample < 0 ? sample * 0x8000 : sample * 0x7fff,
-      true
-    );
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
   }
   return buffer;
 }
 
-
 export default function App() {
-  const TURN_END_DELAY=800
+  const TURN_END_DELAY = 800;
   const NOISE_THRESHOLD = 0.005;
   const socketRef = useRef(null);
   const [agentState, setAgentState] = useState("LISTENING");
@@ -58,57 +53,52 @@ export default function App() {
       let isSpeaking = false;
       let lastSpeechTime = 0;
 
+      processor.onaudioprocess = (event) => {
+        // speech detection logic
+        const now = performance.now();
 
-     processor.onaudioprocess = (event) => {
+        // detecting silence
+        if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY) {
+          console.log("User finished speaking");
 
-  // speech detection logic
-  const now = performance.now();
+          isSpeaking = false;
 
-  // detecting silence
-  if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY) {
-    console.log("User finished speaking");
+          // notify backend
+          socketRef.current.send(JSON.stringify({ type: "user_stopped" }));
+          return;
+        }
 
-    isSpeaking = false;
+        if (
+          socketRef.current?.readyState !== WebSocket.OPEN ||
+          agentState !== "LISTENING"
+        ) {
+          return;
+        }
 
-    // notify backend
-    socketRef.current.send(JSON.stringify({ type: "user_stopped" }));
-    return;
-  }
+        const input = event.inputBuffer.getChannelData(0);
 
-  if (
-    socketRef.current?.readyState !== WebSocket.OPEN ||
-    agentState !== "LISTENING"
-  ) {
-    return;
-  }
+        // Energy (for later VAD)
+        let sum = 0;
+        for (let i = 0; i < input.length; i++) {
+          sum += Math.abs(input[i]);
+        }
+        const energy = sum / input.length;
+        console.log("Energy:", energy);
 
-  const input = event.inputBuffer.getChannelData(0);
+        if (energy < NOISE_THRESHOLD) {
+          return; // noise / silence
+        }
 
-  // Energy (for later VAD)
-  let sum = 0;
-  for (let i = 0; i < input.length; i++) {
-    sum += Math.abs(input[i]);
-  }
-  const energy = sum / input.length;
-  console.log("Energy:", energy);
+        if (!isSpeaking) {
+          isSpeaking = true;
+          console.log("Speaking Started");
+        }
 
-  if (energy < NOISE_THRESHOLD) {
-    return; // noise / silence
-  }
+        lastSpeechTime = now;
 
-  if (!isSpeaking) {
-    isSpeaking = true;
-    console.log("Speaking Started");
-  }
-
-  lastSpeechTime = now;
-
-  const pcmBuffer = floatTo16BitPCM(input);
-  socketRef.current.send(pcmBuffer);
-};
-
-
-
+        const pcmBuffer = floatTo16BitPCM(input);
+        socketRef.current.send(pcmBuffer);
+      };
     }
 
     init();
