@@ -14,9 +14,11 @@ function floatTo16BitPCM(float32Array) {
 
 export default function App() {
   const TURN_END_DELAY = 800;
-  const NOISE_THRESHOLD = 0.005;
+  const NOISE_THRESHOLD = 0.00015;
   const socketRef = useRef(null);
   const [agentState, setAgentState] = useState("LISTENING");
+  const[partialText,setPartialText]=useState("")
+  const[finalText,setFinalText]=useState("")
 
   useEffect(() => {
     async function init() {
@@ -35,6 +37,15 @@ export default function App() {
         if (msg.type === "state") {
           setAgentState(msg.value);
         }
+        if (msg.type === "transcript_partial") {
+          setPartialText(msg.text);
+        }
+
+        if (msg.type === "transcript_final") {
+          setFinalText((prev) => prev + " " + msg.text);
+          setPartialText("");
+        }
+
       };
 
       // Mic
@@ -102,12 +113,15 @@ export default function App() {
     }
 
     init();
-  }, [agentState]);
+  }, []);
 
   return (
     <div>
       <h1>Voice Assistant</h1>
       <h2>Agent state: {agentState}</h2>
+      <p><strong>Live:</strong> {partialText}</p>
+      <p><strong>Final:</strong> {finalText}</p>
+
     </div>
   );
 }
