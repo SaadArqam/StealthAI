@@ -20,7 +20,7 @@ export default function App() {
 
   useEffect(() => {
     async function init() {
-      /* ---------- WebSocket ---------- */
+      // Websocket
       const socket = new WebSocket("ws://localhost:8080");
       socketRef.current = socket;
 
@@ -37,7 +37,7 @@ export default function App() {
         }
       };
 
-      /* ---------- Microphone ---------- */
+      // Mic
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       console.log("Audio permission granted");
 
