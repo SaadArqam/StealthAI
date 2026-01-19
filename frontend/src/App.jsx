@@ -59,48 +59,54 @@ export default function App() {
       let lastSpeechTime = 0;
 
 
-      processor.onaudioprocess = (event) => {
-        
-        // speech detection logic
-        const now=performance.now();
-        if(!isSpeaking){
-          isSpeaking=true
-          console.log("Speaking Started")
-        }
-        lastSpeechTime=now;
+     processor.onaudioprocess = (event) => {
 
-        // detecting silence
-        if(isSpeaking&&now-lastSpeechTime>TURN_END_DELAY){
-          console.log("User finished speaking")
+  // speech detection logic
+  const now = performance.now();
 
-          isSpeaking=false;
-          socketRef.current.send(JSON.stringify({type:"user_stopped"}))
-        }
-        if (
-          socketRef.current?.readyState !== WebSocket.OPEN ||
-          agentState !== "LISTENING"
-        )
-          return;
+  // detecting silence
+  if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY) {
+    console.log("User finished speaking");
 
-        const input = event.inputBuffer.getChannelData(0);
-        // Energy (for later VAD)
-        let sum = 0;
-        for (let i = 0; i < input.length; i++) {
-          sum += Math.abs(input[i]);
-        }
-        const energy = sum / input.length;
-        console.log("Energy:", energy);
+    isSpeaking = false;
 
-        const pcmBuffer = floatTo16BitPCM(input);
-        socketRef.current.send(pcmBuffer);
+    // notify backend
+    socketRef.current.send(JSON.stringify({ type: "user_stopped" }));
+    return;
+  }
 
-        if(energy<NOISE_THRESHOLD){
-          return
-        }
+  if (
+    socketRef.current?.readyState !== WebSocket.OPEN ||
+    agentState !== "LISTENING"
+  ) {
+    return;
+  }
 
+  const input = event.inputBuffer.getChannelData(0);
 
+  // Energy (for later VAD)
+  let sum = 0;
+  for (let i = 0; i < input.length; i++) {
+    sum += Math.abs(input[i]);
+  }
+  const energy = sum / input.length;
+  console.log("Energy:", energy);
 
-      };
+  if (energy < NOISE_THRESHOLD) {
+    return; // noise / silence
+  }
+
+  if (!isSpeaking) {
+    isSpeaking = true;
+    console.log("Speaking Started");
+  }
+
+  lastSpeechTime = now;
+
+  const pcmBuffer = floatTo16BitPCM(input);
+  socketRef.current.send(pcmBuffer);
+};
+
 
 
     }

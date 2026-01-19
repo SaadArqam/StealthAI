@@ -52,16 +52,26 @@ wss.on("connection", (ws) => {
     // JSON = control
     const msg = JSON.parse(data);
 
-    if (msg.type === "user_stopped") {
-      session.state = "THINKING";
-      ws.send(JSON.stringify({ type: "state", value: "THINKING" }));
-    }
+   if (msg.type === "user_stopped") {
+  if (session.state !== "LISTENING") return;
+
+  session.state = "THINKING";
+
+  ws.send(JSON.stringify({
+    type: "state",
+    value: "THINKING"
+  }));
+
+  console.log(`Session ${session.id} turn ended`);
+}
 
     if (msg.type === "barge_in") {
       session.state = "LISTENING";
       session.audioChunks = [];
       ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
     }
+
+    
   });
 
 
