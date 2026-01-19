@@ -16,7 +16,10 @@ function floatTo16BitPCM(float32Array) {
   return buffer;
 }
 
+
 export default function App() {
+  const TURN_END_DELAY=800
+  const NOISE_THRESHOLD = 0.005;
   const socketRef = useRef(null);
   const [agentState, setAgentState] = useState("LISTENING");
 
@@ -52,6 +55,10 @@ export default function App() {
       source.connect(processor);
       processor.connect(audioContext.destination);
 
+      let isSpeaking = false;
+      let lastSpeechTime = 0;
+
+
       processor.onaudioprocess = (event) => {
         if (
           socketRef.current?.readyState !== WebSocket.OPEN ||
@@ -60,7 +67,6 @@ export default function App() {
           return;
 
         const input = event.inputBuffer.getChannelData(0);
-
         // Energy (for later VAD)
         let sum = 0;
         for (let i = 0; i < input.length; i++) {
@@ -71,7 +77,22 @@ export default function App() {
 
         const pcmBuffer = floatTo16BitPCM(input);
         socketRef.current.send(pcmBuffer);
+
+        if(energy<NOISE_THRESHOLD){
+          return
+        }
+
+        // speech detection logic
+        const now=performance.now();
+        if(!isSpeaking){
+          isSpeaking=true
+          console.log("Speaking Started")
+        }
+        lastSpeechTime=now;
+
       };
+
+
     }
 
     init();
