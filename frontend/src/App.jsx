@@ -19,6 +19,8 @@ export default function App() {
   const [agentState, setAgentState] = useState("LISTENING");
   const[partialText,setPartialText]=useState("")
   const[finalText,setFinalText]=useState("")
+  const [assistantText, setAssistantText] = useState("");
+
 
   useEffect(() => {
     async function init() {
@@ -45,7 +47,12 @@ export default function App() {
           setFinalText((prev) => prev + " " + msg.text);
           setPartialText("");
         }
-
+        if(msg.type==="llm_token"){
+          setAssistantText((prev)=>prev+msg.text)
+        }
+        if(msg.type==="llm_done"){
+          console.log("LLM response complete")
+        }
       };
 
       // Mic
@@ -121,6 +128,7 @@ export default function App() {
       <h2>Agent state: {agentState}</h2>
       <p><strong>Live:</strong> {partialText}</p>
       <p><strong>Final:</strong> {finalText}</p>
+      <p><strong>Assistant:</strong> {assistantText}</p>
 
     </div>
   );
