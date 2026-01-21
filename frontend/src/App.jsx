@@ -24,11 +24,14 @@ function floatTo16BitPCM(float32Array) {
 // ==============================
 export default function App() {
   const TURN_END_DELAY = 800;
-  const NOISE_THRESHOLD = 0.00015;
+  const NOISE_THRESHOLD = 0.00005; // lowered for reliability
 
   const socketRef = useRef(null);
 
-  // output audio refs
+  // IMPORTANT: ref to avoid stale React state in audio callback
+  const agentStateRef = useRef("LISTENING");
+
+  // output audio refs (for later TTS)
   const outputContextRef = useRef(null);
   const playbackQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
@@ -58,9 +61,9 @@ export default function App() {
         console.log("WebSocket connected");
       };
 
-      socket.onmessage = async (event) => {
+      socket.onmessage = (event) => {
         // ------------------------------
-        // binary audio = TTS
+        // binary audio (TTS later)
         // ------------------------------
         if (event.data instanceof ArrayBuffer) {
           playbackQueueRef.current.push(event.data);
@@ -74,6 +77,7 @@ export default function App() {
         const msg = JSON.parse(event.data);
 
         if (msg.type === "state") {
+          agentStateRef.current = msg.value; // 🔥 critical fix
           setAgentState(msg.value);
         }
 
@@ -113,22 +117,30 @@ export default function App() {
       processor.onaudioprocess = (event) => {
         const now = performance.now();
 
-        // detecting silence
+        // ------------------------------
+        // detect end of turn
+        // ------------------------------
         if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY) {
           isSpeaking = false;
-          socketRef.current.send(JSON.stringify({ type: "user_stopped" }));
+          socketRef.current.send(
+            JSON.stringify({ type: "user_stopped" })
+          );
           return;
         }
 
+        // ------------------------------
+        // gate audio correctly
+        // ------------------------------
         if (
           socketRef.current.readyState !== WebSocket.OPEN ||
-          agentState !== "LISTENING"
+          agentStateRef.current !== "LISTENING"
         ) {
           return;
         }
 
         const input = event.inputBuffer.getChannelData(0);
 
+        // energy calculation
         let sum = 0;
         for (let i = 0; i < input.length; i++) {
           sum += Math.abs(input[i]);
@@ -140,10 +152,12 @@ export default function App() {
         if (!isSpeaking) {
           isSpeaking = true;
 
-          // barge-in
-          if (agentState === "SPEAKING") {
+          // barge-in support
+          if (agentStateRef.current === "SPEAKING") {
             stopPlayback();
-            socketRef.current.send(JSON.stringify({ type: "barge_in" }));
+            socketRef.current.send(
+              JSON.stringify({ type: "barge_in" })
+            );
           }
         }
 
@@ -154,9 +168,11 @@ export default function App() {
       };
 
       // ------------------------------
-      // output audio context
+      // output audio context (for TTS)
       // ------------------------------
-      outputContextRef.current = new AudioContext({ sampleRate: 16000 });
+      outputContextRef.current = new AudioContext({
+        sampleRate: 16000,
+      });
     }
 
     init();
@@ -170,8 +186,8 @@ export default function App() {
 
     while (playbackQueueRef.current.length > 0) {
       const pcmBuffer = playbackQueueRef.current.shift();
-
       const int16 = new Int16Array(pcmBuffer);
+
       const audioBuffer =
         outputContextRef.current.createBuffer(
           1,

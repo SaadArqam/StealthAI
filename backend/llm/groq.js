@@ -1,29 +1,34 @@
-const Gorq=require("groq-sdk");
+const Groq = require("groq-sdk");
 
+// create groq client
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 
-const gorq=new Gorq({
-    apiKey:process.env.GORQ_API_KEY
-})
+// stream LLM response token-by-token
+async function streamLLMResponse(prompt, onToken) {
+  const completion = await groq.chat.completions.create({
+    model: "llama3-8b-8192",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a helpful, concise voice assistant. Keep responses short and conversational.",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+    stream: true,
+  });
 
-
-async function streamLLMResponse(prompt,onTOken){
-    const completion=groq.chat.completion.create({
-        model:"llama3-8b-8192",
-        meassages:[
-            {
-                role:"system",
-                content:"You are a helpful, conversational voice assistant. Keep responses concise and natural."
-            },
-            {
-                role:"user",content:"prompt"
-            }
-        ],
-        stream:true
-    })
-    for await (const chunk of completion) {
+  for await (const chunk of completion) {
     const token = chunk.choices[0]?.delta?.content;
-    if (token) onToken(token);
+    if (token) {
+      onToken(token);
+    }
   }
 }
 
-module.exports={streamLLMResponse}
+module.exports = { streamLLMResponse };

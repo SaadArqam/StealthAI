@@ -1,21 +1,25 @@
-const {Cartesia}=require("@cartesia/cartesia-js");
+const cartesia = require("@cartesia/cartesia-js");
 
-const client=new Cartesia({
-    apiKey:process.env.CARTESIA_API_KEY
-})
+// create client
+const client = cartesia.createClient({
+  apiKey: process.env.CARTESIA_API_KEY,
+});
 
+// stream TTS audio as raw PCM
+async function streamTTS(text, onAudioChunk) {
+  const stream = await client.tts.stream({
+    model: "sonic-english",
+    voice: "neutral",
+    format: "pcm",
+    sampleRate: 16000,
+    text,
+  });
 
-async function streamTTS(text,onAudioChunks) {
-    const response=await client.tts.stream({
-        model: "sonic-english",
-        voice: "neutral",
-        format: "pcm",
-        sampleRate: 16000,
-        text,
-    })
-    for await(const chunk of response){
-        onAudioChunks(chunk.audio)
+  for await (const chunk of stream) {
+    if (chunk.audio) {
+      onAudioChunk(chunk.audio);
     }
+  }
 }
 
-module.exports={streamTTS}
+module.exports = { streamTTS };
