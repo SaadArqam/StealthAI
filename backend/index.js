@@ -20,6 +20,8 @@ const WebSocket = require("ws");
 const crypto = require("crypto");
 const { Deepgram } = require("@deepgram/sdk");
 const { streamLLMResponse } = require("./llm/groq");
+const { streamTTS } = require("./tts/cartesia");
+
 
 const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
 
@@ -153,6 +155,39 @@ wss.on("connection", (ws) => {
         );
       }, 50);
     }
+
+    // ==============================
+// start TTS
+// ==============================
+let fullAssistantText = "";
+
+await streamLLMResponse(session.finalTranscript, (token) => {
+  fullAssistantText += token;
+
+  ws.send(JSON.stringify({
+    type: "llm_token",
+    text: token,
+  }));
+});
+
+// tell frontend speaking is starting
+ws.send(JSON.stringify({
+  type: "state",
+  value: "SPEAKING",
+}));
+
+// stream audio
+await streamTTS(fullAssistantText, (audioChunk) => {
+  ws.send(audioChunk);
+});
+
+// done speaking
+session.state = "LISTENING";
+ws.send(JSON.stringify({
+  type: "state",
+  value: "LISTENING",
+}));
+
 
     if (msg.type === "barge_in") {
       session.state = "LISTENING";
