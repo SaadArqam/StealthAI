@@ -101,18 +101,78 @@ wss.on("connection", (ws) => {
     // ==============================
     // user finished speaking
     // ==============================
-    if (msg.type === "user_stopped") {
-      console.log("User stopped speaking");
-      session.state = "THINKING";
+ if (msg.type === "user_stopped") {
+  console.log("User stopped speaking");
+  session.state = "THINKING";
+
+  ws.send(JSON.stringify({
+    type: "state",
+    value: "THINKING",
+  }));
+
+  // wait a moment for final transcript
+  setTimeout(async () => {
+    if (!session.finalTranscript) return;
+
+    let llmPrompt = session.finalTranscript;
+
+    // ==============================
+    // web search (Day 7)
+    // ==============================
+    if (needsWebSearch(session.finalTranscript)) {
+      console.log("Web search triggered");
+
+      const results = await webSearch(session.finalTranscript);
+
+      const context = results
+        .map(r =>
+          `[${r.id}] ${r.title}\n${r.content}\nSource: ${r.url}`
+        )
+        .join("\n\n");
+
+      llmPrompt = `
+Use the following web search results to answer the question.
+Cite sources using [number].
+
+${context}
+
+Question:
+${session.finalTranscript}
+      `;
+    }
+
+    // ==============================
+    // stream LLM
+    // ==============================
+    let firstToken = true;
+
+    await streamLLMResponse(llmPrompt, (token) => {
+      if (firstToken) {
+        firstToken = false;
+        session.state = "SPEAKING";
+        ws.send(JSON.stringify({
+          type: "state",
+          value: "SPEAKING",
+        }));
+      }
 
       ws.send(JSON.stringify({
-        type: "state",
-        value: "THINKING",
+        type: "llm_token",
+        text: token,
       }));
+    });
 
-      // DO NOT finish STT yet
-      // wait for Deepgram to emit final result
-    }
+    ws.send(JSON.stringify({ type: "llm_done" }));
+
+    // go back to listening (TTS comes later)
+    session.state = "LISTENING";
+    ws.send(JSON.stringify({
+      type: "state",
+      value: "LISTENING",
+    }));
+  }, 100);
+}
+
   });
 
   ws.on("close", () => {
