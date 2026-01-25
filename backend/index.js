@@ -38,9 +38,7 @@ function needsWebSearch(text) {
     "match",
   ];
 
-  return triggers.some(t =>
-    text.toLowerCase().includes(t)
-  );
+  return triggers.some(t => text.toLowerCase().includes(t));
 }
 
 // ==============================
@@ -64,6 +62,17 @@ wss.on("connection", (ws) => {
     finalTranscript: null,
     context: "You are a helpful voice assistant.",
     dgConnection: null,
+
+    // ==============================
+    // observability (Day 9)
+    // ==============================
+    metrics: {
+      vadEnd: null,
+      sttFinal: null,
+      llmStart: null,
+      llmFirstToken: null,
+      llmEnd: null,
+    },
   };
 
   sessions.set(session.id, session);
@@ -71,10 +80,7 @@ wss.on("connection", (ws) => {
   console.log(`Client connected: ${session.id}`);
   ws.binaryType = "arraybuffer";
 
-  ws.send(JSON.stringify({
-    type: "state",
-    value: "LISTENING",
-  }));
+  ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
 
   // ==============================
   // Deepgram STT (v3)
@@ -92,14 +98,19 @@ wss.on("connection", (ws) => {
   });
 
   session.dgConnection.on("Results", (msg) => {
-    const transcript =
-      msg.channel?.alternatives?.[0]?.transcript;
-
+    const transcript = msg.channel?.alternatives?.[0]?.transcript;
     if (!transcript) return;
 
     if (msg.is_final) {
       session.finalTranscript = transcript;
-      console.log("FINAL:", transcript);
+      session.metrics.sttFinal = Date.now();
+
+      console.log(JSON.stringify({
+        event: "stt_final",
+        sessionId: session.id,
+        sttLatencyMs:
+          session.metrics.sttFinal - session.metrics.vadEnd,
+      }));
 
       ws.send(JSON.stringify({
         type: "transcript_final",
@@ -119,18 +130,13 @@ wss.on("connection", (ws) => {
 
   // ==============================
   // websocket messages
-// ==============================
+  // ==============================
   ws.on("message", async (data) => {
     // ------------------------------
     // audio frames
     // ------------------------------
     if (typeof data !== "string") {
       if (session.state !== "LISTENING") return;
-
-      console.log(
-        "Audio chunk received:",
-        data.byteLength
-      );
 
       session.dgConnection.send(Buffer.from(data));
       return;
@@ -142,15 +148,12 @@ wss.on("connection", (ws) => {
     // user finished speaking
     // ==============================
     if (msg.type === "user_stopped") {
-      console.log("User stopped speaking");
+      session.metrics.vadEnd = Date.now();
       session.state = "THINKING";
 
-      ws.send(JSON.stringify({
-        type: "state",
-        value: "THINKING",
-      }));
+      ws.send(JSON.stringify({ type: "state", value: "THINKING" }));
 
-      // wait briefly for final STT
+      // wait briefly for STT final
       setTimeout(async () => {
         if (!session.finalTranscript) return;
 
@@ -163,14 +166,10 @@ ${session.finalTranscript}
 `;
 
         // ==============================
-        // Web Search 
+        // web search
         // ==============================
         if (needsWebSearch(session.finalTranscript)) {
-          console.log("Web search triggered");
-
-          const results = await webSearch(
-            session.finalTranscript
-          );
+          const results = await webSearch(session.finalTranscript);
 
           const context = results
             .map(r =>
@@ -191,15 +190,25 @@ ${session.finalTranscript}
         }
 
         // ==============================
-        // stream LLM
+        // stream LLM (metrics)
         // ==============================
+        session.metrics.llmStart = Date.now();
         let firstToken = true;
 
         await streamLLMResponse(llmPrompt, (token) => {
           if (firstToken) {
             firstToken = false;
-            session.state = "SPEAKING";
+            session.metrics.llmFirstToken = Date.now();
 
+            console.log(JSON.stringify({
+              event: "llm_ttft",
+              sessionId: session.id,
+              ttftMs:
+                session.metrics.llmFirstToken -
+                session.metrics.llmStart,
+            }));
+
+            session.state = "SPEAKING";
             ws.send(JSON.stringify({
               type: "state",
               value: "SPEAKING",
@@ -212,16 +221,32 @@ ${session.finalTranscript}
           }));
         });
 
+        session.metrics.llmEnd = Date.now();
+
+        console.log(JSON.stringify({
+          event: "llm_complete",
+          sessionId: session.id,
+          llmTotalMs:
+            session.metrics.llmEnd -
+            session.metrics.llmStart,
+        }));
+
+        const e2eLatency =
+          session.metrics.llmEnd -
+          session.metrics.vadEnd;
+
+        console.log(JSON.stringify({
+          event: "turn_complete",
+          sessionId: session.id,
+          e2eLatencyMs: e2eLatency,
+        }));
+
         ws.send(JSON.stringify({ type: "llm_done" }));
 
         // reset for next turn
         session.finalTranscript = null;
         session.state = "LISTENING";
-
-        ws.send(JSON.stringify({
-          type: "state",
-          value: "LISTENING",
-        }));
+        ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
       }, 100);
     }
   });
@@ -230,33 +255,39 @@ ${session.finalTranscript}
   // cleanup
   // ==============================
   ws.on("close", () => {
-    console.log(`Client disconnected: ${session.id}`);
     session.dgConnection.finish();
     sessions.delete(session.id);
+    console.log(`Client disconnected: ${session.id}`);
   });
 });
 
 // ==============================
-
+// admin API 
 // ==============================
 app.post("/admin/context", (req, res) => {
   const { sessionId, context } = req.body;
 
   if (!sessions.has(sessionId)) {
-    return res
-      .status(404)
-      .json({ error: "Session not found" });
+    return res.status(404).json({ error: "Session not found" });
   }
 
-  const session = sessions.get(sessionId);
-  session.context = context;
-
-  console.log(
-    `Context updated for session ${sessionId}:`,
-    context
-  );
-
+  sessions.get(sessionId).context = context;
   res.json({ success: true });
+});
+
+// ==============================
+// metrics API 
+// ==============================
+app.get("/metrics", (req, res) => {
+  const out = [];
+  sessions.forEach((s) => {
+    out.push({
+      sessionId: s.id,
+      state: s.state,
+      metrics: s.metrics,
+    });
+  });
+  res.json(out);
 });
 
 // ==============================
