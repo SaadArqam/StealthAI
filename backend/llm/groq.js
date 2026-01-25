@@ -1,11 +1,11 @@
 const Groq = require("groq-sdk");
 
-// create groq client
+
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-// stream LLM response token-by-token
+
 async function streamLLMResponse(prompt, onToken) {
   const completion = await groq.chat.completions.create({
     model: "llama3-8b-8192",

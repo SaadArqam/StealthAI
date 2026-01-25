@@ -1,6 +1,3 @@
-// ==============================
-// imports
-// ==============================
 require("dotenv").config();
 
 const express = require("express");
@@ -10,20 +7,13 @@ const { createClient } = require("@deepgram/sdk");
 const { streamLLMResponse } = require("./llm/groq");
 const { webSearch } = require("./tools/webSearch");
 
-// ==============================
-// app + middleware
-// ==============================
+
 const app = express();
 app.use(express.json());
 
-// ==============================
-// clients
-// ==============================
+
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
-// ==============================
-// helpers
-// ==============================
 function needsWebSearch(text) {
   const triggers = [
     "latest",
@@ -41,20 +31,14 @@ function needsWebSearch(text) {
   return triggers.some(t => text.toLowerCase().includes(t));
 }
 
-// ==============================
+
 // websocket server
-// ==============================
 const wss = new WebSocket.Server({ port: 8080 });
 console.log("WebSocket server running on ws://localhost:8080");
 
-// ==============================
-// session store
-// ==============================
+
 const sessions = new Map();
 
-// ==============================
-// websocket connection handler
-// ==============================
 wss.on("connection", (ws) => {
   const session = {
     id: crypto.randomUUID(),
@@ -62,10 +46,6 @@ wss.on("connection", (ws) => {
     finalTranscript: null,
     context: "You are a helpful voice assistant.",
     dgConnection: null,
-
-    // ==============================
-    // observability (Day 9)
-    // ==============================
     metrics: {
       vadEnd: null,
       sttFinal: null,
@@ -82,9 +62,8 @@ wss.on("connection", (ws) => {
 
   ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
 
-  // ==============================
+
   // Deepgram STT (v3)
-  // ==============================
   session.dgConnection = deepgram.listen.live({
     model: "nova-2",
     language: "en-US",
@@ -128,13 +107,9 @@ wss.on("connection", (ws) => {
     console.error("Deepgram error:", err);
   });
 
-  // ==============================
-  // websocket messages
-  // ==============================
+
   ws.on("message", async (data) => {
-    // ------------------------------
     // audio frames
-    // ------------------------------
     if (typeof data !== "string") {
       if (session.state !== "LISTENING") return;
 
@@ -144,16 +119,16 @@ wss.on("connection", (ws) => {
 
     const msg = JSON.parse(data);
 
-    // ==============================
+
     // user finished speaking
-    // ==============================
+
     if (msg.type === "user_stopped") {
       session.metrics.vadEnd = Date.now();
       session.state = "THINKING";
 
       ws.send(JSON.stringify({ type: "state", value: "THINKING" }));
 
-      // wait briefly for STT final
+
       setTimeout(async () => {
         if (!session.finalTranscript) return;
 
@@ -165,9 +140,8 @@ User says:
 ${session.finalTranscript}
 `;
 
-        // ==============================
+
         // web search
-        // ==============================
         if (needsWebSearch(session.finalTranscript)) {
           const results = await webSearch(session.finalTranscript);
 
@@ -189,9 +163,7 @@ ${session.finalTranscript}
 `;
         }
 
-        // ==============================
         // stream LLM (metrics)
-        // ==============================
         session.metrics.llmStart = Date.now();
         let firstToken = true;
 
@@ -251,9 +223,8 @@ ${session.finalTranscript}
     }
   });
 
-  // ==============================
+
   // cleanup
-  // ==============================
   ws.on("close", () => {
     session.dgConnection.finish();
     sessions.delete(session.id);
@@ -261,9 +232,7 @@ ${session.finalTranscript}
   });
 });
 
-// ==============================
 // admin API 
-// ==============================
 app.post("/admin/context", (req, res) => {
   const { sessionId, context } = req.body;
 
@@ -275,9 +244,7 @@ app.post("/admin/context", (req, res) => {
   res.json({ success: true });
 });
 
-// ==============================
 // metrics API 
-// ==============================
 app.get("/metrics", (req, res) => {
   const out = [];
   sessions.forEach((s) => {
@@ -290,9 +257,7 @@ app.get("/metrics", (req, res) => {
   res.json(out);
 });
 
-// ==============================
-// start admin server
-// ==============================
+
 app.listen(3000, () => {
   console.log("Admin API running on http://localhost:3000");
 });

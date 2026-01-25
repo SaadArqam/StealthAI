@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-// ==============================
-// utils
-// ==============================
+
 function floatTo16BitPCM(float32Array) {
   const buffer = new ArrayBuffer(float32Array.length * 2);
   const view = new DataView(buffer);
@@ -19,19 +17,16 @@ function floatTo16BitPCM(float32Array) {
   return buffer;
 }
 
-// ==============================
-// component
-// ==============================
+
 export default function App() {
   const TURN_END_DELAY = 800;
   const NOISE_THRESHOLD = 0.00005; // lowered for reliability
 
   const socketRef = useRef(null);
 
-  // IMPORTANT: ref to avoid stale React state in audio callback
   const agentStateRef = useRef("LISTENING");
 
-  // output audio refs (for later TTS)
+
   const outputContextRef = useRef(null);
   const playbackQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
@@ -42,17 +37,14 @@ export default function App() {
   const [finalText, setFinalText] = useState("");
   const [assistantText, setAssistantText] = useState("");
 
-  // ==============================
-  // init once
-  // ==============================
+
   useEffect(() => {
     let isSpeaking = false;
     let lastSpeechTime = 0;
 
     async function init() {
-      // ------------------------------
+
       // websocket
-      // ------------------------------
       const socket = new WebSocket("ws://localhost:8080");
       socket.binaryType = "arraybuffer";
       socketRef.current = socket;
@@ -62,22 +54,19 @@ export default function App() {
       };
 
       socket.onmessage = (event) => {
-        // ------------------------------
-        // binary audio (TTS later)
-        // ------------------------------
+
+        // binary audio 
         if (event.data instanceof ArrayBuffer) {
           playbackQueueRef.current.push(event.data);
           if (!isPlayingRef.current) playAudio();
           return;
         }
 
-        // ------------------------------
-        // JSON messages
-        // ------------------------------
+
         const msg = JSON.parse(event.data);
 
         if (msg.type === "state") {
-          agentStateRef.current = msg.value; // 🔥 critical fix
+          agentStateRef.current = msg.value; 
           setAgentState(msg.value);
         }
 
@@ -99,9 +88,8 @@ export default function App() {
         }
       };
 
-      // ------------------------------
+
       // microphone
-      // ------------------------------
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       console.log("Audio permission granted");
 
@@ -117,9 +105,7 @@ export default function App() {
       processor.onaudioprocess = (event) => {
         const now = performance.now();
 
-        // ------------------------------
-        // detect end of turn
-        // ------------------------------
+
         if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY) {
           isSpeaking = false;
           socketRef.current.send(
@@ -128,9 +114,7 @@ export default function App() {
           return;
         }
 
-        // ------------------------------
         // gate audio correctly
-        // ------------------------------
         if (
           socketRef.current.readyState !== WebSocket.OPEN ||
           agentStateRef.current !== "LISTENING"
@@ -167,9 +151,7 @@ export default function App() {
         socketRef.current.send(pcmBuffer);
       };
 
-      // ------------------------------
       // output audio context (for TTS)
-      // ------------------------------
       outputContextRef.current = new AudioContext({
         sampleRate: 16000,
       });
@@ -178,9 +160,9 @@ export default function App() {
     init();
   }, []);
 
-  // ==============================
+
   // audio playback (PCM)
-  // ==============================
+
   async function playAudio() {
     isPlayingRef.current = true;
 
@@ -216,9 +198,7 @@ export default function App() {
     isPlayingRef.current = false;
   }
 
-  // ==============================
   // stop playback (barge-in)
-  // ==============================
   function stopPlayback() {
     playbackQueueRef.current.length = 0;
     if (currentSourceRef.current) {
@@ -229,9 +209,7 @@ export default function App() {
     isPlayingRef.current = false;
   }
 
-  // ==============================
-  // UI
-  // ==============================
+
   return (
     <div>
       <h1>Voice Assistant</h1>
