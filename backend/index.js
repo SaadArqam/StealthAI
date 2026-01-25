@@ -6,6 +6,7 @@ const crypto = require("crypto");
 const { createClient } = require("@deepgram/sdk");
 const { streamLLMResponse } = require("./llm/groq");
 const { webSearch } = require("./tools/webSearch");
+const { streamTTS } = require("./tts/deepgram");
 
 
 const app = express();
@@ -13,6 +14,7 @@ app.use(express.json());
 
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+
 
 function needsWebSearch(text) {
   const triggers = [
@@ -28,16 +30,24 @@ function needsWebSearch(text) {
     "match",
   ];
 
-  return triggers.some(t => text.toLowerCase().includes(t));
+  return triggers.some(t =>
+    text.toLowerCase().includes(t)
+  );
 }
 
 
 // websocket server
+
 const wss = new WebSocket.Server({ port: 8080 });
 console.log("WebSocket server running on ws://localhost:8080");
 
 
+// session store
+
 const sessions = new Map();
+
+
+// websocket connection handler
 
 wss.on("connection", (ws) => {
   const session = {
@@ -62,8 +72,9 @@ wss.on("connection", (ws) => {
 
   ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
 
-
+  
   // Deepgram STT (v3)
+  
   session.dgConnection = deepgram.listen.live({
     model: "nova-2",
     language: "en-US",
@@ -72,24 +83,15 @@ wss.on("connection", (ws) => {
     interim_results: true,
   });
 
-  session.dgConnection.on("Open", () => {
-    console.log("Deepgram STT OPEN");
-  });
-
   session.dgConnection.on("Results", (msg) => {
-    const transcript = msg.channel?.alternatives?.[0]?.transcript;
+    const transcript =
+      msg.channel?.alternatives?.[0]?.transcript;
+
     if (!transcript) return;
 
     if (msg.is_final) {
       session.finalTranscript = transcript;
       session.metrics.sttFinal = Date.now();
-
-      console.log(JSON.stringify({
-        event: "stt_final",
-        sessionId: session.id,
-        sttLatencyMs:
-          session.metrics.sttFinal - session.metrics.vadEnd,
-      }));
 
       ws.send(JSON.stringify({
         type: "transcript_final",
@@ -103,31 +105,48 @@ wss.on("connection", (ws) => {
     }
   });
 
-  session.dgConnection.on("Error", (err) => {
-    console.error("Deepgram error:", err);
-  });
-
-
+  
+  // websocket messages
+  
   ws.on("message", async (data) => {
+
     // audio frames
     if (typeof data !== "string") {
       if (session.state !== "LISTENING") return;
-
       session.dgConnection.send(Buffer.from(data));
       return;
     }
 
     const msg = JSON.parse(data);
 
+    
 
+    
+    if (msg.type === "barge_in") {
+      console.log("BARGE-IN");
+
+      session.state = "LISTENING";
+      session.finalTranscript = null;
+
+      ws.send(JSON.stringify({
+        type: "state",
+        value: "LISTENING",
+      }));
+
+      return;
+    }
+
+    
     // user finished speaking
-
+    
     if (msg.type === "user_stopped") {
       session.metrics.vadEnd = Date.now();
       session.state = "THINKING";
 
-      ws.send(JSON.stringify({ type: "state", value: "THINKING" }));
-
+      ws.send(JSON.stringify({
+        type: "state",
+        value: "THINKING",
+      }));
 
       setTimeout(async () => {
         if (!session.finalTranscript) return;
@@ -140,8 +159,9 @@ User says:
 ${session.finalTranscript}
 `;
 
-
+        
         // web search
+        
         if (needsWebSearch(session.finalTranscript)) {
           const results = await webSearch(session.finalTranscript);
 
@@ -163,22 +183,18 @@ ${session.finalTranscript}
 `;
         }
 
-        // stream LLM (metrics)
-        session.metrics.llmStart = Date.now();
+        
+        // stream LLM
+        
+        let assistantText = "";
         let firstToken = true;
+
+        session.metrics.llmStart = Date.now();
 
         await streamLLMResponse(llmPrompt, (token) => {
           if (firstToken) {
             firstToken = false;
             session.metrics.llmFirstToken = Date.now();
-
-            console.log(JSON.stringify({
-              event: "llm_ttft",
-              sessionId: session.id,
-              ttftMs:
-                session.metrics.llmFirstToken -
-                session.metrics.llmStart,
-            }));
 
             session.state = "SPEAKING";
             ws.send(JSON.stringify({
@@ -187,6 +203,8 @@ ${session.finalTranscript}
             }));
           }
 
+          assistantText += token;
+
           ws.send(JSON.stringify({
             type: "llm_token",
             text: token,
@@ -194,37 +212,33 @@ ${session.finalTranscript}
         });
 
         session.metrics.llmEnd = Date.now();
-
-        console.log(JSON.stringify({
-          event: "llm_complete",
-          sessionId: session.id,
-          llmTotalMs:
-            session.metrics.llmEnd -
-            session.metrics.llmStart,
-        }));
-
-        const e2eLatency =
-          session.metrics.llmEnd -
-          session.metrics.vadEnd;
-
-        console.log(JSON.stringify({
-          event: "turn_complete",
-          sessionId: session.id,
-          e2eLatencyMs: e2eLatency,
-        }));
-
         ws.send(JSON.stringify({ type: "llm_done" }));
 
-        // reset for next turn
+        
+        // stream TTS audio
+        
+        await streamTTS(assistantText, (audioChunk) => {
+          if (session.state !== "SPEAKING") return;
+          ws.send(audioChunk);
+        });
+
+        
+        // reset
+        
         session.finalTranscript = null;
         session.state = "LISTENING";
-        ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
+
+        ws.send(JSON.stringify({
+          type: "state",
+          value: "LISTENING",
+        }));
       }, 100);
     }
   });
 
-
+  
   // cleanup
+  
   ws.on("close", () => {
     session.dgConnection.finish();
     sessions.delete(session.id);
@@ -232,7 +246,9 @@ ${session.finalTranscript}
   });
 });
 
-// admin API 
+
+// admin API
+
 app.post("/admin/context", (req, res) => {
   const { sessionId, context } = req.body;
 
@@ -244,7 +260,9 @@ app.post("/admin/context", (req, res) => {
   res.json({ success: true });
 });
 
-// metrics API 
+
+// metrics API
+
 app.get("/metrics", (req, res) => {
   const out = [];
   sessions.forEach((s) => {
@@ -257,6 +275,8 @@ app.get("/metrics", (req, res) => {
   res.json(out);
 });
 
+
+// start admin server
 
 app.listen(3000, () => {
   console.log("Admin API running on http://localhost:3000");
