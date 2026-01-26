@@ -9,6 +9,14 @@ const { webSearch } = require("./tools/webSearch");
 const { streamTTS } = require("./tts/deepgram");
 
 
+const { streamLLMWithFallback } = require("./llm/llmWithFallback");
+const { getEmbedding } = require("./llm/embeddings");
+const {
+  getCachedResponse,
+  storeCachedResponse,
+} = require("./cache/semanticCache");
+
+
 const app = express();
 app.use(express.json());
 
@@ -186,12 +194,43 @@ ${session.finalTranscript}
         
         // stream LLM
         
+        // ==============================
+        // Day 11: semantic cache
+        // ==============================
+        const embedding = await getEmbedding(session.finalTranscript);
+        const cached = getCachedResponse(embedding);
+
+        if (cached) {
+          console.log("CACHE HIT");
+
+          session.state = "SPEAKING";
+          ws.send(JSON.stringify({
+            type: "state",
+            value: "SPEAKING",
+          }));
+
+          ws.send(JSON.stringify({
+            type: "llm_token",
+            text: cached,
+          }));
+
+          ws.send(JSON.stringify({ type: "llm_done" }));
+
+          session.state = "LISTENING";
+          ws.send(JSON.stringify({
+            type: "state",
+            value: "LISTENING",
+          }));
+
+          return;
+        }
+
         let assistantText = "";
         let firstToken = true;
 
         session.metrics.llmStart = Date.now();
 
-        await streamLLMResponse(llmPrompt, (token) => {
+        await streamLLMWithFallback(llmPrompt, (token) => {
           if (firstToken) {
             firstToken = false;
             session.metrics.llmFirstToken = Date.now();
@@ -213,6 +252,8 @@ ${session.finalTranscript}
 
         session.metrics.llmEnd = Date.now();
         ws.send(JSON.stringify({ type: "llm_done" }));
+
+        storeCachedResponse(embedding, assistantText);
 
         
         // stream TTS audio
