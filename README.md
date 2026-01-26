@@ -31,31 +31,31 @@ with emphasis on performance, scalability, and engineering judgment.
 
 User Mic
 
-↓
+  ↓
 
 Noise Filtering + Energy Detection
 
-↓
+  ↓
 
 VAD + Turn Detection
 
-↓
+  ↓
 
 WebSocket Audio Stream
 
-↓
+  ↓
 
 Speech-to-Text (Deepgram)
 
-↓
+  ↓
 
 LLM + Tools (Groq + Web Search)
 
-↓
+  ↓
 
 Text-to-Speech (Deepgram)
 
-↓
+  ↓
 
 Streaming Audio to Browser
 
@@ -185,7 +185,7 @@ cd backend
 npm install
 ```
 
-## Environment Variables
+## 🔐 Environment Variables
 ```
 Create .env:
 
