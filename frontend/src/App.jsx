@@ -179,33 +179,35 @@ export default function App() {
   }
 
   return (
-    <div style={styles.container}>
+  <div className="app">
+    <header className="header">
       <h1>Voice Assistant</h1>
-      <p style={styles.state}>Agent state: {agentState}</p>
+      <span className={`state ${agentState.toLowerCase()}`}>
+        {agentState}
+      </span>
+    </header>
 
-      <div style={styles.chat}>
+    <main className="chat-wrapper">
+      <div className="chat">
         {messages.map((m, i) => (
           <div
             key={i}
-            style={{
-              ...styles.message,
-              ...(m.role === "user"
-                ? styles.user
-                : styles.assistant),
-            }}
+            className={`bubble ${m.role === "user" ? "user" : "assistant"}`}
           >
             {m.text}
           </div>
         ))}
 
         {partialText && (
-          <div style={{ ...styles.message, ...styles.user, opacity: 0.6 }}>
+          <div className="bubble user partial">
             {partialText}
           </div>
         )}
       </div>
-    </div>
-  );
+    </main>
+  </div>
+);
+
 }
 
 const styles = {
