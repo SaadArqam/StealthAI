@@ -99,16 +99,25 @@ wss.on("connection", (ws) => {
 
     //  WS MESSAGES
   ws.on("message", async (data) => {
+    let text = null;
 
-    //  AUDIO 
-    if (!(typeof data === "string")) {
-      if (session.state === "LISTENING") {
-        session.dgConnection.send(Buffer.from(data));
+    if (typeof data === "string") {
+      text = data;
+    } else if (Buffer.isBuffer(data)) {
+      const maybeText = data.toString("utf8");
+      if (maybeText.trim().startsWith("{")) {
+        text = maybeText;
+      } else {
+        if (session.state === "LISTENING") {
+          session.dgConnection.send(data);
+        }
+        return;
       }
+    } else {
       return;
     }
 
-    const msg = JSON.parse(data);
+    const msg = JSON.parse(text);
 
     //  BARGE-IN 
     if (msg.type === "barge_in") {
@@ -125,11 +134,17 @@ wss.on("connection", (ws) => {
 
       setTimeout(async () => {
         if (!session.finalTranscript) {
+          session.state = "SPEAKING";
+          ws.send(JSON.stringify({ type: "state", value: "SPEAKING" }));
+
           ws.send(JSON.stringify({
             type: "llm_token",
             text: "Sorry, I didn’t catch that. Could you repeat?",
           }));
+
           ws.send(JSON.stringify({ type: "llm_done" }));
+
+          session.state = "LISTENING";
           ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
           return;
         }
@@ -160,14 +175,11 @@ wss.on("connection", (ws) => {
 
         ws.send(JSON.stringify({ type: "llm_done" }));
 
-        //  TTS 
         try {
           await streamTTS(assistantText, (audio) => {
             ws.send(audio);
           });
-        } catch (e) {
-          console.error("TTS failed:", e.message);
-        }
+        } catch (e) {}
 
         session.finalTranscript = null;
         session.state = "LISTENING";
