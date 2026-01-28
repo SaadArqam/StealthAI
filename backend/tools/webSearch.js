@@ -1,22 +1,41 @@
-const { TavilyClient } = require("tavily");
+// Provide a mock web search when TAVILY_API_KEY is not set so
+// the app can run locally without external credentials.
+if (!process.env.TAVILY_API_KEY) {
+  console.warn("TAVILY_API_KEY not found — using mock web search for local testing.");
 
-const tavily = new TavilyClient({
-  apiKey: process.env.TAVILY_API_KEY,
-});
+  async function webSearch(query) {
+    return [
+      {
+        id: 1,
+        title: "Example result",
+        url: "https://example.com",
+        content: `Mock content for query: ${query}`,
+      },
+    ];
+  }
 
-async function webSearch(query) {
-  const result = await tavily.search({
-    query,
-    search_depth: "basic",
-    max_results: 5,
+  module.exports = { webSearch };
+} else {
+  const { TavilyClient } = require("tavily");
+
+  const tavily = new TavilyClient({
+    apiKey: process.env.TAVILY_API_KEY,
   });
 
-  return result.results.map((r, i) => ({
-    id: i + 1,
-    title: r.title,
-    url: r.url,
-    content: r.content,
-  }));
-}
+  async function webSearch(query) {
+    const result = await tavily.search({
+      query,
+      search_depth: "basic",
+      max_results: 5,
+    });
 
-module.exports = { webSearch };
+    return result.results.map((r, i) => ({
+      id: i + 1,
+      title: r.title,
+      url: r.url,
+      content: r.content,
+    }));
+  }
+
+  module.exports = { webSearch };
+}

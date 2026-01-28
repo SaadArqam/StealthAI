@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 
-
 function floatTo16BitPCM(float32Array) {
   const buffer = new ArrayBuffer(float32Array.length * 2);
   const view = new DataView(buffer);
@@ -17,15 +16,12 @@ function floatTo16BitPCM(float32Array) {
   return buffer;
 }
 
-
 export default function App() {
   const TURN_END_DELAY = 800;
-  const NOISE_THRESHOLD = 0.0002; // lowered for reliability
+  const NOISE_THRESHOLD = 0.0002;
 
   const socketRef = useRef(null);
-
   const agentStateRef = useRef("LISTENING");
-
 
   const outputContextRef = useRef(null);
   const playbackQueueRef = useRef([]);
@@ -34,17 +30,13 @@ export default function App() {
 
   const [agentState, setAgentState] = useState("LISTENING");
   const [partialText, setPartialText] = useState("");
-  const [finalText, setFinalText] = useState("");
-  const [assistantText, setAssistantText] = useState("");
-
+  const [messages, setMessages] = useState([]);
 
   useEffect(() => {
     let isSpeaking = false;
     let lastSpeechTime = 0;
 
     async function init() {
-
-      // websocket
       const socket = new WebSocket("ws://localhost:8080");
       socket.binaryType = "arraybuffer";
       socketRef.current = socket;
@@ -54,19 +46,16 @@ export default function App() {
       };
 
       socket.onmessage = (event) => {
-
-        // binary audio 
         if (event.data instanceof ArrayBuffer) {
           playbackQueueRef.current.push(event.data);
           if (!isPlayingRef.current) playAudio();
           return;
         }
 
-
         const msg = JSON.parse(event.data);
 
         if (msg.type === "state") {
-          agentStateRef.current = msg.value; 
+          agentStateRef.current = msg.value;
           setAgentState(msg.value);
         }
 
@@ -75,26 +64,29 @@ export default function App() {
         }
 
         if (msg.type === "transcript_final") {
-          setFinalText((prev) => prev + " " + msg.text);
+          setMessages((prev) => [
+            ...prev,
+            { role: "user", text: msg.text },
+          ]);
           setPartialText("");
         }
 
         if (msg.type === "llm_token") {
-          setAssistantText((prev) => prev + msg.text);
-        }
-
-        if (msg.type === "llm_done") {
-          console.log("LLM response complete");
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === "assistant") {
+              return [
+                ...prev.slice(0, -1),
+                { role: "assistant", text: last.text + msg.text },
+              ];
+            }
+            return [...prev, { role: "assistant", text: msg.text }];
+          });
         }
       };
 
-
-      // microphone
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log("Audio permission granted");
-
       const audioContext = new AudioContext({ sampleRate: 16000 });
-      console.log("AudioContext sample rate:", audioContext.sampleRate);
 
       const source = audioContext.createMediaStreamSource(stream);
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
@@ -105,15 +97,12 @@ export default function App() {
       processor.onaudioprocess = (event) => {
         const now = performance.now();
 
+        if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY * 2) {
+          isSpeaking = false;
+          socketRef.current.send(JSON.stringify({ type: "user_stopped" }));
+          return;
+        }
 
-if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY * 2) {
-  isSpeaking = false;
-  socketRef.current.send(JSON.stringify({ type: "user_stopped" }));
-  return;
-}
-
-
-        // gate audio correctly
         if (
           socketRef.current.readyState !== WebSocket.OPEN ||
           agentStateRef.current !== "LISTENING"
@@ -123,86 +112,62 @@ if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY * 2) {
 
         const input = event.inputBuffer.getChannelData(0);
 
-        // energy calculation
         let sum = 0;
-        for (let i = 0; i < input.length; i++) {
-          sum += Math.abs(input[i]);
-        }
+        for (let i = 0; i < input.length; i++) sum += Math.abs(input[i]);
         const energy = sum / input.length;
-
         if (energy < NOISE_THRESHOLD) return;
 
         if (!isSpeaking) {
           isSpeaking = true;
-
-          // barge-in support
           if (agentStateRef.current === "SPEAKING") {
             stopPlayback();
-            socketRef.current.send(
-              JSON.stringify({ type: "barge_in" })
-            );
+            socketRef.current.send(JSON.stringify({ type: "barge_in" }));
           }
         }
 
         lastSpeechTime = now;
-
-        const pcmBuffer = floatTo16BitPCM(input);
-        socketRef.current.send(pcmBuffer);
+        socketRef.current.send(floatTo16BitPCM(input));
       };
 
-      // output audio context (for TTS)
-      outputContextRef.current = new AudioContext({
-        sampleRate: 16000,
-      });
+      outputContextRef.current = new AudioContext({ sampleRate: 16000 });
     }
 
     init();
   }, []);
 
-
-  // audio playback (PCM)
-
- async function playAudio() {
-  if (outputContextRef.current.state === "suspended") {
-    await outputContextRef.current.resume();
-  }
-
-  isPlayingRef.current = true;
-
-  while (playbackQueueRef.current.length > 0) {
-    const pcmBuffer = playbackQueueRef.current.shift();
-    const int16 = new Int16Array(pcmBuffer);
-
-    const audioBuffer =
-      outputContextRef.current.createBuffer(
-        1,
-        int16.length,
-        16000
-      );
-
-    const channelData = audioBuffer.getChannelData(0);
-    for (let i = 0; i < int16.length; i++) {
-      channelData[i] = int16[i] / 32768;
+  async function playAudio() {
+    if (outputContextRef.current.state === "suspended") {
+      await outputContextRef.current.resume();
     }
 
-    const source =
-      outputContextRef.current.createBufferSource();
-    currentSourceRef.current = source;
+    isPlayingRef.current = true;
 
-    source.buffer = audioBuffer;
-    source.connect(outputContextRef.current.destination);
+    while (playbackQueueRef.current.length > 0) {
+      const pcmBuffer = playbackQueueRef.current.shift();
+      const int16 = new Int16Array(pcmBuffer);
 
-    await new Promise((res) => {
-      source.onended = res;
-      source.start();
-    });
+      const audioBuffer =
+        outputContextRef.current.createBuffer(1, int16.length, 16000);
+
+      const channelData = audioBuffer.getChannelData(0);
+      for (let i = 0; i < int16.length; i++) {
+        channelData[i] = int16[i] / 32768;
+      }
+
+      const source = outputContextRef.current.createBufferSource();
+      currentSourceRef.current = source;
+      source.buffer = audioBuffer;
+      source.connect(outputContextRef.current.destination);
+
+      await new Promise((res) => {
+        source.onended = res;
+        source.start();
+      });
+    }
+
+    isPlayingRef.current = false;
   }
 
-  isPlayingRef.current = false;
-}
-
-
-  // stop playback (barge-in)
   function stopPlayback() {
     playbackQueueRef.current.length = 0;
     if (currentSourceRef.current) {
@@ -213,15 +178,67 @@ if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY * 2) {
     isPlayingRef.current = false;
   }
 
-
   return (
-    <div>
+    <div style={styles.container}>
       <h1>Voice Assistant</h1>
-      <h2>Agent state: {agentState}</h2>
+      <p style={styles.state}>Agent state: {agentState}</p>
 
-      <p><strong>Live:</strong> {partialText}</p>
-      <p><strong>Final:</strong> {finalText}</p>
-      <p><strong>Assistant:</strong> {assistantText}</p>
+      <div style={styles.chat}>
+        {messages.map((m, i) => (
+          <div
+            key={i}
+            style={{
+              ...styles.message,
+              ...(m.role === "user"
+                ? styles.user
+                : styles.assistant),
+            }}
+          >
+            {m.text}
+          </div>
+        ))}
+
+        {partialText && (
+          <div style={{ ...styles.message, ...styles.user, opacity: 0.6 }}>
+            {partialText}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
+const styles = {
+  container: {
+    background: "#0f0f0f",
+    minHeight: "100vh",
+    color: "#fff",
+    padding: "20px",
+    fontFamily: "system-ui, sans-serif",
+  },
+  state: {
+    color: "#aaa",
+    marginBottom: "16px",
+  },
+  chat: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+    maxWidth: "900px",
+  },
+  message: {
+    padding: "12px 16px",
+    borderRadius: "14px",
+    maxWidth: "70%",
+    lineHeight: "1.4",
+    whiteSpace: "pre-wrap",
+  },
+  user: {
+    alignSelf: "flex-start",
+    background: "#1e1e1e",
+  },
+  assistant: {
+    alignSelf: "flex-end",
+    background: "#2b6cff",
+  },
+};

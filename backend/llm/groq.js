@@ -1,34 +1,48 @@
-const Groq = require("groq-sdk");
+// If GROQ_API_KEY is not provided, export a lightweight mock streamer
+// so the server can run for local testing without credentials.
+if (!process.env.GROQ_API_KEY) {
+  console.warn("GROQ_API_KEY not found — using mock LLM response for local testing.");
 
-
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
-
-
-async function streamLLMResponse(prompt, onToken) {
-  const completion = await groq.chat.completions.create({
-    model: "llama3-8b-8192",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a helpful, concise voice assistant. Keep responses short and conversational.",
-      },
-      {
-        role: "user",
-        content: prompt,
-      },
-    ],
-    stream: true,
-  });
-
-  for await (const chunk of completion) {
-    const token = chunk.choices[0]?.delta?.content;
-    if (token) {
-      onToken(token);
+  async function streamLLMResponse(prompt, onToken) {
+    const tokens = ["Hello from the mock LLM.", " I can answer your question."];
+    for (const t of tokens) {
+      await new Promise((r) => setTimeout(r, 200));
+      onToken(t);
     }
   }
-}
 
-module.exports = { streamLLMResponse };
+  module.exports = { streamLLMResponse };
+} else {
+  const Groq = require("groq-sdk");
+
+  const groq = new Groq({
+    apiKey: process.env.GROQ_API_KEY,
+  });
+
+  async function streamLLMResponse(prompt, onToken) {
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a helpful, concise voice assistant. Keep responses short and conversational.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      stream: true,
+    });
+
+    for await (const chunk of completion) {
+      const token = chunk.choices[0]?.delta?.content;
+      if (token) {
+        onToken(token);
+      }
+    }
+  }
+
+  module.exports = { streamLLMResponse };
+}

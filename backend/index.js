@@ -1,4 +1,5 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const express = require("express");
 const WebSocket = require("ws");
@@ -21,7 +22,17 @@ const app = express();
 app.use(express.json());
 
 
-const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+let deepgram = null;
+if (process.env.DEEPGRAM_API_KEY) {
+  try {
+    deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+  } catch (err) {
+    console.warn("Failed to initialize Deepgram client:", err.message);
+    deepgram = null;
+  }
+} else {
+  console.warn("DEEPGRAM_API_KEY not set — STT will be disabled (mock mode).");
+}
 
 
 function needsWebSearch(text) {
@@ -48,6 +59,9 @@ function needsWebSearch(text) {
 
 const wss = new WebSocket.Server({ port: 8080 });
 console.log("WebSocket server running on ws://localhost:8080");
+
+// Debug: log presence of important env keys (don't print values)
+console.log("ENV: DEEPGRAM=", !!process.env.DEEPGRAM_API_KEY, "GROQ=", !!process.env.GROQ_API_KEY, "OPENAI=", !!process.env.OPENAI_API_KEY, "TAVILY=", !!process.env.TAVILY_API_KEY);
 
 
 // session store
@@ -81,51 +95,94 @@ wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
 
   
-  // Deepgram STT (v3)
-  
-  session.dgConnection = deepgram.listen.live({
-    model: "nova-2",
-    language: "en-US",
-    encoding: "linear16",
-    sample_rate: 16000,
-    interim_results: true,
-  });
+  // Deepgram STT (v3) — if no Deepgram key, provide a mock connection
+  if (deepgram) {
+    session.dgConnection = deepgram.listen.live({
+      model: "nova-2",
+      language: "en-US",
+      encoding: "linear16",
+      sample_rate: 16000,
+      interim_results: true,
+    });
 
-  session.dgConnection.on("Results", (msg) => {
-    const transcript =
-      msg.channel?.alternatives?.[0]?.transcript;
+    session.dgConnection.on("Results", (msg) => {
+      const transcript =
+        msg.channel?.alternatives?.[0]?.transcript;
 
-    if (!transcript) return;
+      if (!transcript) return;
 
-    if (msg.is_final) {
-      session.finalTranscript = transcript;
-      session.metrics.sttFinal = Date.now();
+      if (msg.is_final) {
+        session.finalTranscript = transcript;
+        session.metrics.sttFinal = Date.now();
 
-      ws.send(JSON.stringify({
-        type: "transcript_final",
-        text: transcript,
-      }));
-    } else {
-      ws.send(JSON.stringify({
-        type: "transcript_partial",
-        text: transcript,
-      }));
-    }
-  });
+        ws.send(JSON.stringify({
+          type: "transcript_final",
+          text: transcript,
+        }));
+      } else {
+        ws.send(JSON.stringify({
+          type: "transcript_partial",
+          text: transcript,
+        }));
+      }
+    });
+  } else {
+    // Minimal mock dgConnection for local testing. It will accept .send() and .finish().
+    session.dgConnection = {
+      send: () => {},
+      finish: () => {},
+      on: () => {},
+    };
+  }
 
   
   // websocket messages
   
   ws.on("message", async (data) => {
 
-    // audio frames
-    if (typeof data !== "string") {
+    // The message may arrive as string or as a Buffer/ArrayBuffer.
+    // Try to handle both: if it's textual JSON, parse it; otherwise treat as binary audio.
+    let isText = typeof data === "string";
+    let textData = null;
+
+    if (!isText) {
+      // Buffer (Node) or ArrayBuffer (ws in browser)
+      try {
+        if (data instanceof Buffer) {
+          // Node Buffer
+          const maybeText = data.toString("utf8");
+          // crude check for JSON control
+          if (maybeText.trim().startsWith("{")) {
+            isText = true;
+            textData = maybeText;
+          }
+        } else if (data instanceof ArrayBuffer) {
+          const nodeBuf = Buffer.from(data);
+          const maybeText = nodeBuf.toString("utf8");
+          if (maybeText.trim().startsWith("{")) {
+            isText = true;
+            textData = maybeText;
+          }
+        }
+      } catch (err) {
+        // fall-through to treat as binary
+      }
+    }
+
+    if (!isText) {
+      try {
+        const len = data.byteLength || data.length || 0;
+        console.log(`Received binary audio chunk (${len} bytes) for session ${session.id}`);
+      } catch {}
+
       if (session.state !== "LISTENING") return;
       session.dgConnection.send(Buffer.from(data));
       return;
     }
 
-    const msg = JSON.parse(data);
+    // parse text JSON control message
+    const msg = JSON.parse(isText && textData ? textData : data);
+    console.log(`Received control message for session ${session.id}:`, msg.type);
 
     
 
@@ -157,7 +214,20 @@ wss.on("connection", (ws) => {
       }));
 
       setTimeout(async () => {
-        if (!session.finalTranscript) return;
+        if (!session.finalTranscript) {
+          // If STT hasn't produced a final transcript (e.g. Deepgram not configured),
+          // send a short canned response so the frontend shows the assistant flow.
+          session.state = "SPEAKING";
+          ws.send(JSON.stringify({ type: "state", value: "SPEAKING" }));
+
+          ws.send(JSON.stringify({ type: "llm_token", text: "Sorry, I didn't catch that. Could you repeat?" }));
+          ws.send(JSON.stringify({ type: "llm_done" }));
+
+          session.state = "LISTENING";
+          ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
+
+          return;
+        }
 
         let llmPrompt = `
 System Instructions:
@@ -197,33 +267,33 @@ ${session.finalTranscript}
         // ==============================
         // Day 11: semantic cache
         // ==============================
-        const embedding = await getEmbedding(session.finalTranscript);
-        const cached = getCachedResponse(embedding);
+        // const embedding = await getEmbedding(session.finalTranscript);
+        // const cached = getCachedResponse(embedding);
 
-        if (cached) {
-          console.log("CACHE HIT");
+        // if (cached) {
+        //   console.log("CACHE HIT");
 
-          session.state = "SPEAKING";
-          ws.send(JSON.stringify({
-            type: "state",
-            value: "SPEAKING",
-          }));
+        //   session.state = "SPEAKING";
+        //   ws.send(JSON.stringify({
+        //     type: "state",
+        //     value: "SPEAKING",
+        //   }));
 
-          ws.send(JSON.stringify({
-            type: "llm_token",
-            text: cached,
-          }));
+        //   ws.send(JSON.stringify({
+        //     type: "llm_token",
+        //     text: cached,
+        //   }));
 
-          ws.send(JSON.stringify({ type: "llm_done" }));
+        //   ws.send(JSON.stringify({ type: "llm_done" }));
 
-          session.state = "LISTENING";
-          ws.send(JSON.stringify({
-            type: "state",
-            value: "LISTENING",
-          }));
+        //   session.state = "LISTENING";
+        //   ws.send(JSON.stringify({
+        //     type: "state",
+        //     value: "LISTENING",
+        //   }));
 
-          return;
-        }
+        //   return;
+        // }
 
         let assistantText = "";
         let firstToken = true;
@@ -253,7 +323,7 @@ ${session.finalTranscript}
         session.metrics.llmEnd = Date.now();
         ws.send(JSON.stringify({ type: "llm_done" }));
 
-        storeCachedResponse(embedding, assistantText);
+        // storeCachedResponse(embedding, assistantText);
 
         
         // stream TTS audio
