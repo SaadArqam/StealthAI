@@ -391,5 +391,5 @@ app.get("/metrics", (req, res) => {
 PORT=process.env.PORT||3000
 
 app.listen(PORT, () => {
-  console.log("Admin API running on http://localhost:3000");
+  console.log("Admin API running on http://localhost:PORT");
 });
