@@ -54,12 +54,11 @@ wss.on("connection", (ws) => {
     state: "LISTENING",
     finalTranscript: null,
     dgConnection: null,
+    waitingForFinal: false,
   };
 
   sessions.set(session.id, session);
   ws.binaryType = "arraybuffer";
-
-  console.log("Client connected:", session.id);
 
   ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
 
@@ -75,21 +74,14 @@ wss.on("connection", (ws) => {
     });
 
     session.dgConnection.on("Results", (msg) => {
-      const transcript =
-        msg.channel?.alternatives?.[0]?.transcript;
+      const transcript = msg.channel?.alternatives?.[0]?.transcript;
       if (!transcript) return;
 
       if (msg.is_final) {
         session.finalTranscript = transcript;
-        ws.send(JSON.stringify({
-          type: "transcript_final",
-          text: transcript,
-        }));
+        ws.send(JSON.stringify({ type: "transcript_final", text: transcript }));
       } else {
-        ws.send(JSON.stringify({
-          type: "transcript_partial",
-          text: transcript,
-        }));
+        ws.send(JSON.stringify({ type: "transcript_partial", text: transcript }));
       }
     });
   } else {
@@ -119,31 +111,33 @@ wss.on("connection", (ws) => {
 
     const msg = JSON.parse(text);
 
-    //  BARGE-IN 
     if (msg.type === "barge_in") {
       session.state = "LISTENING";
       session.finalTranscript = null;
+      session.waitingForFinal = false;
       ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
       return;
     }
 
-    //  USER STOPPED 
     if (msg.type === "user_stopped") {
       session.state = "THINKING";
+      session.waitingForFinal = true;
       ws.send(JSON.stringify({ type: "state", value: "THINKING" }));
 
-      setTimeout(async () => {
+      const waitStart = Date.now();
+
+      const waitForFinal = async () => {
+        while (!session.finalTranscript && Date.now() - waitStart < 900) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+
+        session.waitingForFinal = false;
+
         if (!session.finalTranscript) {
           session.state = "SPEAKING";
           ws.send(JSON.stringify({ type: "state", value: "SPEAKING" }));
-
-          ws.send(JSON.stringify({
-            type: "llm_token",
-            text: "Sorry, I didn’t catch that. Could you repeat?",
-          }));
-
+          ws.send(JSON.stringify({ type: "llm_token", text: "Sorry, I didn’t catch that. Could you repeat?" }));
           ws.send(JSON.stringify({ type: "llm_done" }));
-
           session.state = "LISTENING";
           ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
           return;
@@ -153,10 +147,7 @@ wss.on("connection", (ws) => {
 
         if (needsWebSearch(session.finalTranscript)) {
           const results = await webSearch(session.finalTranscript);
-          const context = results
-            .map(r => `${r.title}\n${r.content}`)
-            .join("\n\n");
-
+          const context = results.map(r => `${r.title}\n${r.content}`).join("\n\n");
           prompt = `${context}\n\nUser:\n${session.finalTranscript}`;
         }
 
@@ -167,45 +158,35 @@ wss.on("connection", (ws) => {
 
         await streamLLMWithFallback(prompt, (token) => {
           assistantText += token;
-          ws.send(JSON.stringify({
-            type: "llm_token",
-            text: token,
-          }));
+          ws.send(JSON.stringify({ type: "llm_token", text: token }));
         });
 
         ws.send(JSON.stringify({ type: "llm_done" }));
 
         try {
-          await streamTTS(assistantText, (audio) => {
-            ws.send(audio);
-          });
-        } catch (e) {}
+          await streamTTS(assistantText, (audio) => ws.send(audio));
+        } catch {}
 
         session.finalTranscript = null;
         session.state = "LISTENING";
         ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
+      };
 
-      }, 150);
+      waitForFinal();
     }
   });
 
   ws.on("close", () => {
     session.dgConnection?.finish?.();
     sessions.delete(session.id);
-    console.log("Client disconnected:", session.id);
   });
 });
 
 
 app.get("/metrics", (_, res) => {
-  res.json([...sessions.values()].map(s => ({
-    id: s.id,
-    state: s.state,
-  })));
+  res.json([...sessions.values()].map(s => ({ id: s.id, state: s.state })));
 });
 
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+server.listen(PORT);
