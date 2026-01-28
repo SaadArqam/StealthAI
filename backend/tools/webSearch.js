@@ -1,5 +1,4 @@
-// Provide a mock web search when TAVILY_API_KEY is not set so
-// the app can run locally without external credentials.
+
 if (!process.env.TAVILY_API_KEY) {
   console.warn("TAVILY_API_KEY not found — using mock web search for local testing.");
 

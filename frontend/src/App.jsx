@@ -208,37 +208,3 @@ export default function App() {
   );
 }
 
-// const styles = {
-//   container: {
-//     background: "#0f0f0f",
-//     minHeight: "100vh",
-//     color: "#fff",
-//     padding: "20px",
-//     fontFamily: "system-ui, sans-serif",
-//   },
-//   state: {
-//     color: "#aaa",
-//     marginBottom: "16px",
-//   },
-//   chat: {
-//     display: "flex",
-//     flexDirection: "column",
-//     gap: "12px",
-//     maxWidth: "900px",
-//   },
-//   message: {
-//     padding: "12px 16px",
-//     borderRadius: "14px",
-//     maxWidth: "70%",
-//     lineHeight: "1.4",
-//     whiteSpace: "pre-wrap",
-//   },
-//   user: {
-//     alignSelf: "flex-start",
-//     background: "#1e1e1e",
-//   },
-//   assistant: {
-//     alignSelf: "flex-end",
-//     background: "#2b6cff",
-//   },
-// };

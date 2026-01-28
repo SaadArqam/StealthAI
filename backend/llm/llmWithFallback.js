@@ -7,7 +7,7 @@ async function streamLLMWithFallback(prompt, onToken) {
   } catch (err) {
     console.error("Groq failed, falling back:", err.message);
 
-    // If OPENAI_API_KEY is present, use it; otherwise, provide a mock fallback
+
     if (process.env.OPENAI_API_KEY) {
       const OpenAI = require("openai");
       const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -23,7 +23,7 @@ async function streamLLMWithFallback(prompt, onToken) {
         if (token) onToken(token);
       }
     } else {
-      // Mock fallback: stream a couple tokens so the frontend can show output
+
       const mock = ["(mock) I can't reach the LLM right now.", " Please check keys."];
       for (const t of mock) {
         await new Promise((r) => setTimeout(r, 200));

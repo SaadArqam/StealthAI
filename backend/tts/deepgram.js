@@ -1,5 +1,4 @@
-// Provide a robust streamTTS that uses Deepgram when available and falls
-// back to a mock PCM generator if the SDK method is unavailable or errors.
+
 const { createClient } = require("@deepgram/sdk");
 
 let deepgram = null;
@@ -27,7 +26,7 @@ function generateSinePCM(durationMs = 800, sampleRate = 16000) {
 }
 
 async function streamTTS(text, onAudioChunk) {
-  // If deepgram client exists and provides a speak.stream function, use it.
+
   if (deepgram && deepgram.speak && typeof deepgram.speak.stream === "function") {
     try {
       const stream = await deepgram.speak.stream({
@@ -52,7 +51,7 @@ async function streamTTS(text, onAudioChunk) {
     console.warn("Deepgram client present but speak.stream is not available — using mock TTS fallback.");
   }
 
-  // Mock TTS streaming: generate a sine wave and stream it in chunks to simulate TTS audio.
+
   const pcm = generateSinePCM(900, 16000);
   const chunkSize = 32000;
   for (let i = 0; i < pcm.length; i += chunkSize) {

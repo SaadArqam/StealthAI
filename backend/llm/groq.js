@@ -1,5 +1,4 @@
-// If GROQ_API_KEY is not provided, export a lightweight mock streamer
-// so the server can run for local testing without credentials.
+
 if (!process.env.GROQ_API_KEY) {
   console.warn("GROQ_API_KEY not found — using mock LLM response for local testing.");
 
