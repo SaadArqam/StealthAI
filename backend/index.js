@@ -58,7 +58,7 @@ function needsWebSearch(text) {
 // websocket server
 const PORT1=process.env.PORT1||8080
 const wss = new WebSocket.Server({ port: PORT1 });
-console.log("WebSocket server running on ws://localhost:8080");
+console.log("WebSocket server running on ws://localhost:PORT1");
 
 // Debug: log presence of important env keys (don't print values)
 console.log("ENV: DEEPGRAM=", !!process.env.DEEPGRAM_API_KEY, "GROQ=", !!process.env.GROQ_API_KEY, "OPENAI=", !!process.env.OPENAI_API_KEY, "TAVILY=", !!process.env.TAVILY_API_KEY);
