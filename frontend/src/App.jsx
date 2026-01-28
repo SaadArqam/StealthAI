@@ -7,11 +7,7 @@ function floatTo16BitPCM(float32Array) {
   let offset = 0;
   for (let i = 0; i < float32Array.length; i++, offset += 2) {
     let sample = Math.max(-1, Math.min(1, float32Array[i]));
-    view.setInt16(
-      offset,
-      sample < 0 ? sample * 0x8000 : sample * 0x7fff,
-      true
-    );
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
   }
   return buffer;
 }
@@ -37,7 +33,12 @@ export default function App() {
     let lastSpeechTime = 0;
 
     async function init() {
-      const socket = new WebSocket("ws://localhost:8080");
+      const socket = new WebSocket(
+        import.meta.env.PROD
+          ? import.meta.env.VITE_WS_URL
+          : "ws://localhost:8080",
+      );
+
       socket.binaryType = "arraybuffer";
       socketRef.current = socket;
 
@@ -64,10 +65,7 @@ export default function App() {
         }
 
         if (msg.type === "transcript_final") {
-          setMessages((prev) => [
-            ...prev,
-            { role: "user", text: msg.text },
-          ]);
+          setMessages((prev) => [...prev, { role: "user", text: msg.text }]);
           setPartialText("");
         }
 
@@ -146,8 +144,11 @@ export default function App() {
       const pcmBuffer = playbackQueueRef.current.shift();
       const int16 = new Int16Array(pcmBuffer);
 
-      const audioBuffer =
-        outputContextRef.current.createBuffer(1, int16.length, 16000);
+      const audioBuffer = outputContextRef.current.createBuffer(
+        1,
+        int16.length,
+        16000,
+      );
 
       const channelData = audioBuffer.getChannelData(0);
       for (let i = 0; i < int16.length; i++) {
@@ -179,35 +180,32 @@ export default function App() {
   }
 
   return (
-  <div className="app">
-    <header className="header">
-      <h1>Voice Assistant</h1>
-      <span className={`state ${agentState.toLowerCase()}`}>
-        {agentState}
-      </span>
-    </header>
+    <div className="app">
+      <header className="header">
+        <h1>Voice Assistant</h1>
+        <span className={`state ${agentState.toLowerCase()}`}>
+          {agentState}
+        </span>
+      </header>
 
-    <main className="chat-wrapper">
-      <div className="chat">
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            className={`bubble ${m.role === "user" ? "user" : "assistant"}`}
-          >
-            {m.text}
-          </div>
-        ))}
+      <main className="chat-wrapper">
+        <div className="chat">
+          {messages.map((m, i) => (
+            <div
+              key={i}
+              className={`bubble ${m.role === "user" ? "user" : "assistant"}`}
+            >
+              {m.text}
+            </div>
+          ))}
 
-        {partialText && (
-          <div className="bubble user partial">
-            {partialText}
-          </div>
-        )}
-      </div>
-    </main>
-  </div>
-);
-
+          {partialText && (
+            <div className="bubble user partial">{partialText}</div>
+          )}
+        </div>
+      </main>
+    </div>
+  );
 }
 
 // const styles = {
