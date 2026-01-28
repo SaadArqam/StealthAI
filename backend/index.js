@@ -56,8 +56,8 @@ function needsWebSearch(text) {
 
 
 // websocket server
-
-const wss = new WebSocket.Server({ port: 8080 });
+const PORT1=process.env.PORT1||8080
+const wss = new WebSocket.Server({ port: PORT1 });
 console.log("WebSocket server running on ws://localhost:8080");
 
 // Debug: log presence of important env keys (don't print values)
@@ -388,7 +388,8 @@ app.get("/metrics", (req, res) => {
 
 
 // start admin server
+PORT=process.env.PORT||3000
 
-app.listen(3000, () => {
+app.listen(PORT, () => {
   console.log("Admin API running on http://localhost:3000");
 });
