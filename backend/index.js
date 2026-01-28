@@ -258,10 +258,10 @@ ${session.finalTranscript}
         
         // stream TTS audio
         
-        await streamTTS(assistantText, (audioChunk) => {
-          if (session.state !== "SPEAKING") return;
-          ws.send(audioChunk);
-        });
+  await streamTTS(assistantText, (audioChunk) => {
+    ws.send(audioChunk);
+  });
+
 
         
         // reset

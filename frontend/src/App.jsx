@@ -20,7 +20,7 @@ function floatTo16BitPCM(float32Array) {
 
 export default function App() {
   const TURN_END_DELAY = 800;
-  const NOISE_THRESHOLD = 0.00005; // lowered for reliability
+  const NOISE_THRESHOLD = 0.0002; // lowered for reliability
 
   const socketRef = useRef(null);
 
@@ -106,13 +106,12 @@ export default function App() {
         const now = performance.now();
 
 
-        if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY) {
-          isSpeaking = false;
-          socketRef.current.send(
-            JSON.stringify({ type: "user_stopped" })
-          );
-          return;
-        }
+if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY * 2) {
+  isSpeaking = false;
+  socketRef.current.send(JSON.stringify({ type: "user_stopped" }));
+  return;
+}
+
 
         // gate audio correctly
         if (
@@ -163,40 +162,45 @@ export default function App() {
 
   // audio playback (PCM)
 
-  async function playAudio() {
-    isPlayingRef.current = true;
+ async function playAudio() {
+  if (outputContextRef.current.state === "suspended") {
+    await outputContextRef.current.resume();
+  }
 
-    while (playbackQueueRef.current.length > 0) {
-      const pcmBuffer = playbackQueueRef.current.shift();
-      const int16 = new Int16Array(pcmBuffer);
+  isPlayingRef.current = true;
 
-      const audioBuffer =
-        outputContextRef.current.createBuffer(
-          1,
-          int16.length,
-          16000
-        );
+  while (playbackQueueRef.current.length > 0) {
+    const pcmBuffer = playbackQueueRef.current.shift();
+    const int16 = new Int16Array(pcmBuffer);
 
-      const channelData = audioBuffer.getChannelData(0);
-      for (let i = 0; i < int16.length; i++) {
-        channelData[i] = int16[i] / 32768;
-      }
+    const audioBuffer =
+      outputContextRef.current.createBuffer(
+        1,
+        int16.length,
+        16000
+      );
 
-      const source =
-        outputContextRef.current.createBufferSource();
-      currentSourceRef.current = source;
-
-      source.buffer = audioBuffer;
-      source.connect(outputContextRef.current.destination);
-
-      await new Promise((res) => {
-        source.onended = res;
-        source.start();
-      });
+    const channelData = audioBuffer.getChannelData(0);
+    for (let i = 0; i < int16.length; i++) {
+      channelData[i] = int16[i] / 32768;
     }
 
-    isPlayingRef.current = false;
+    const source =
+      outputContextRef.current.createBufferSource();
+    currentSourceRef.current = source;
+
+    source.buffer = audioBuffer;
+    source.connect(outputContextRef.current.destination);
+
+    await new Promise((res) => {
+      source.onended = res;
+      source.start();
+    });
   }
+
+  isPlayingRef.current = false;
+}
+
 
   // stop playback (barge-in)
   function stopPlayback() {

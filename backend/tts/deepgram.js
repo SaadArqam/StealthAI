@@ -3,18 +3,16 @@ const { createClient } = require("@deepgram/sdk");
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
 async function streamTTS(text, onAudioChunk) {
-  const response = await deepgram.speak.request(
-    { text },
-    {
-      model: "aura-asteria-en",
-      encoding: "linear16",
-      sample_rate: 16000,
-    }
-  );
+  const stream = await deepgram.speak.stream({
+    text,
+    model: "aura-asteria-en",
+    encoding: "linear16",
+    sample_rate: 16000,
+  });
 
-  for await (const chunk of response.stream()) {
-    if (chunk.type === "audio") {
-      onAudioChunk(Buffer.from(chunk.data));
+  for await (const message of stream) {
+    if (message.type === "audio") {
+      onAudioChunk(Buffer.from(message.data));
     }
   }
 }
