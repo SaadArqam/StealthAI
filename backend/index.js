@@ -223,6 +223,17 @@ app.get("/metrics", (_, res) => {
 });
 
 
+//  HEALTH
+
+app.get("/health", (_, res) => {
+  res.status(200).json({
+    status: "ok",
+    uptime: process.uptime(),
+    activeSessions: sessions.size,
+  });
+});
+
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
