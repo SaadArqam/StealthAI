@@ -13,27 +13,25 @@ const { streamTTS } = require("./tts/deepgram");
 const app = express();
 app.use(express.json());
 
-/* ==============================
-   ENV + CLIENTS
-================================ */
+
+  //  ENV + CLIENTS
+
 const deepgram = process.env.DEEPGRAM_API_KEY
   ? createClient(process.env.DEEPGRAM_API_KEY)
   : null;
 
-/* ==============================
-   HTTP + WS (SAME SERVER)
-================================ */
+
+  //  HTTP + WS 
+
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-/* ==============================
-   SESSION STORE
-================================ */
+
+  //  SESSION STORE
+
 const sessions = new Map();
 
-/* ==============================
-   HELPERS
-================================ */
+
 function needsWebSearch(text) {
   const triggers = [
     "latest",
@@ -49,9 +47,7 @@ function needsWebSearch(text) {
   return triggers.some((t) => text.toLowerCase().includes(t));
 }
 
-/* ==============================
-   WEBSOCKET HANDLER
-================================ */
+  //  WEBSOCKET HANDLER
 wss.on("connection", (ws) => {
   const session = {
     id: crypto.randomUUID(),
@@ -67,9 +63,8 @@ wss.on("connection", (ws) => {
 
   ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
 
-  /* ==============================
-     DEEPGRAM STT
-  ================================ */
+
+    //  DEEPGRAM STT
   if (deepgram) {
     session.dgConnection = deepgram.listen.live({
       model: "nova-2",
@@ -101,12 +96,11 @@ wss.on("connection", (ws) => {
     session.dgConnection = { send() {}, finish() {} };
   }
 
-  /* ==============================
-     WS MESSAGES
-  ================================ */
+
+    //  WS MESSAGES
   ws.on("message", async (data) => {
 
-    /* ---------- AUDIO ---------- */
+    //  AUDIO 
     if (!(typeof data === "string")) {
       if (session.state === "LISTENING") {
         session.dgConnection.send(Buffer.from(data));
@@ -116,7 +110,7 @@ wss.on("connection", (ws) => {
 
     const msg = JSON.parse(data);
 
-    /* ---------- BARGE-IN ---------- */
+    //  BARGE-IN 
     if (msg.type === "barge_in") {
       session.state = "LISTENING";
       session.finalTranscript = null;
@@ -124,7 +118,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /* ---------- USER STOPPED ---------- */
+    //  USER STOPPED 
     if (msg.type === "user_stopped") {
       session.state = "THINKING";
       ws.send(JSON.stringify({ type: "state", value: "THINKING" }));
@@ -166,7 +160,7 @@ wss.on("connection", (ws) => {
 
         ws.send(JSON.stringify({ type: "llm_done" }));
 
-        /* ---------- TTS ---------- */
+        //  TTS 
         try {
           await streamTTS(assistantText, (audio) => {
             ws.send(audio);
@@ -190,9 +184,7 @@ wss.on("connection", (ws) => {
   });
 });
 
-/* ==============================
-   ADMIN + METRICS
-================================ */
+
 app.get("/metrics", (_, res) => {
   res.json([...sessions.values()].map(s => ({
     id: s.id,
@@ -200,9 +192,7 @@ app.get("/metrics", (_, res) => {
   })));
 });
 
-/* ==============================
-   START SERVER (RENDER SAFE)
-================================ */
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
