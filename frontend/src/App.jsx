@@ -180,31 +180,47 @@ export default function App() {
   }
 
   return (
-    <div className="app">
-      <header className="header">
-        <h1>Voice Assistant</h1>
-        <span className={`state ${agentState.toLowerCase()}`}>
-          {agentState}
-        </span>
-      </header>
+  <div className="app">
+    <header className="header">
+      <h1>Voice Assistant</h1>
+      <span className={`state ${agentState.toLowerCase()}`}>
+        {agentState}
+      </span>
+    </header>
 
-      <main className="chat-wrapper">
-        <div className="chat">
-          {messages.map((m, i) => (
-            <div
-              key={i}
-              className={`bubble ${m.role === "user" ? "user" : "assistant"}`}
-            >
-              {m.text}
-            </div>
-          ))}
-
-          {partialText && (
-            <div className="bubble user partial">{partialText}</div>
+    <main className="chat-wrapper">
+      {messages.length === 0 && (
+        <div className="empty-state">
+          <div className={`mic ${agentState.toLowerCase()}`} />
+          {agentState === "LISTENING" && (
+            <p>🎙️ Speak your thoughts…</p>
+          )}
+          {agentState === "THINKING" && (
+            <p>🤔 Thinking…</p>
+          )}
+          {agentState === "SPEAKING" && (
+            <p>🔊 Responding…</p>
           )}
         </div>
-      </main>
-    </div>
-  );
+      )}
+
+      <div className="chat">
+        {messages.map((m, i) => (
+          <div
+            key={i}
+            className={`bubble ${m.role === "user" ? "user" : "assistant"}`}
+          >
+            {m.text}
+          </div>
+        ))}
+
+        {partialText && (
+          <div className="bubble user partial">{partialText}</div>
+        )}
+      </div>
+    </main>
+  </div>
+);
+
 }
 
