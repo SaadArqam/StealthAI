@@ -236,3 +236,17 @@ npm run dev
 - UI-based observability dashboard
 - Multilingual speech and text support
 
+## 🚢 Deployment notes (quick)
+
+1) Set environment variables in your host (Render, Heroku, etc.) using the variables from `backend/.env.example`.
+
+2) Ensure your frontend connects to backend over the correct WS scheme:
+  - If frontend served via HTTPS, set `VITE_WS_URL` to `wss://<your-backend-host>` when building the frontend.
+
+3) Keep the service warm: free platforms often suspend idle instances. Use an external uptime monitor (UptimeRobot / Healthchecks) to POST `/prewarm` or GET `/health` every 4–10 minutes to avoid cold starts.
+
+4) For production, configure a Node ≥18 runtime and use the `start:prod` script in `backend/package.json`.
+
+5) Deepgram TTS compatibility: if production needs real TTS (not the mock sine fallback), ensure the installed `@deepgram/sdk` version supports the TTS API used in `backend/tts/deepgram.js`.
+
+

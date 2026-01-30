@@ -9,6 +9,7 @@ const { createClient } = require("@deepgram/sdk");
 const { streamLLMWithFallback, prewarmLLM } = require("./llm/llmWithFallback");
 const { webSearch } = require("./tools/webSearch");
 const { streamTTS, prewarm: prewarmTTS } = require("./tts/deepgram");
+const logger = require("./logger");
 
 const app = express();
 app.use(express.json());
@@ -56,7 +57,7 @@ function needsWebSearch(text) {
 //  WEBSOCKET HANDLER
 
 wss.on("connection", (ws) => {
-  // mark connection alive and listen for pongs
+
   ws.isAlive = true;
   ws.on("pong", heartbeat);
 
@@ -75,13 +76,14 @@ wss.on("connection", (ws) => {
 
   sessions.set(session.id, session);
   ws.binaryType = "arraybuffer";
+  logger.info("Client connected:", session.id);
 
-  console.log("Client connected:", session.id);
 
-  // Send session id to client so frontend can correlate logs
   try {
     ws.send(JSON.stringify({ type: "session_id", id: session.id }));
-  } catch {}
+  } catch (e) {
+    logger.debug("Failed to send session_id to client (likely transient):", e?.message || e);
+  }
   ws.send(JSON.stringify({ type: "state", value: "LISTENING" }));
 
 
@@ -100,7 +102,7 @@ wss.on("connection", (ws) => {
       const transcript = msg.channel?.alternatives?.[0]?.transcript;
       if (!transcript) return;
 
-      // store the latest partial result; promote to final on is_final
+
       session.partialTranscript = transcript;
 
       if (msg.is_final) {
@@ -119,6 +121,7 @@ wss.on("connection", (ws) => {
     });
   } else {
     session.dgConnection = { send() {}, finish() {} };
+    logger.warn("DEEPGRAM not configured — running with mock STT/TTS behavior");
   }
 
 
@@ -151,7 +154,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    const msg = JSON.parse(text);
+  const msg = JSON.parse(text);
 
 
     //  BARGE-IN 
@@ -166,7 +169,7 @@ wss.on("connection", (ws) => {
 
     //  TURN START
     if (msg.type === "turn_start") {
-      // record the active turn id for this session
+
       try { session.currentTurnId = msg.id; } catch {}
       return;
     }
@@ -174,13 +177,13 @@ wss.on("connection", (ws) => {
     //  USER STOPPED 
 
     if (msg.type === "user_stopped") {
-      // dedupe repeated stop events for the same turn
+
       if (msg.id && session.lastHandledTurnId === msg.id) {
         console.log("Ignoring duplicate user_stopped for turn", msg.id);
         return;
       }
       if (msg.id) session.lastHandledTurnId = msg.id;
-        // Start thinking immediately using the best available transcript (final or partial)
+
         session.state = "THINKING";
         ws.send(JSON.stringify({ type: "state", value: "THINKING" }));
 
@@ -208,7 +211,7 @@ wss.on("connection", (ws) => {
             const context = results.map(r => `${r.title}\n${r.content}`).join("\n\n");
             prompt = `${context}\n\nUser:\n${transcriptToUse}`;
           } catch (err) {
-            console.warn("WebSearch failed (continuing without web context):", err?.message || err);
+            logger.warn("WebSearch failed (continuing without web context):", err?.message || err);
           }
         }
 
@@ -218,31 +221,38 @@ wss.on("connection", (ws) => {
         let assistantText = "";
 
         try {
+          logger.info("LLM start for session", session.id);
+
+          try { ws.send(JSON.stringify({ type: "llm_started", ts: Date.now() })); } catch (e) { logger.debug("failed to send llm_started", e?.message || e); }
+
+          let tokenIndex = 0;
           await streamLLMWithFallback(prompt, (token) => {
             assistantText += token;
+            const payload = { type: "llm_token", text: token, index: tokenIndex++, ts: Date.now() };
             try {
-              ws.send(JSON.stringify({ type: "llm_token", text: token }));
+              ws.send(JSON.stringify(payload));
             } catch (err) {
-              console.warn("Failed sending llm_token to client:", err?.message || err);
+              logger.warn("Failed sending llm_token to client:", err?.message || err);
             }
           });
 
-          ws.send(JSON.stringify({ type: "llm_done" }));
+          try { ws.send(JSON.stringify({ type: "llm_done", ts: Date.now() })); } catch (e) { logger.debug("failed to send llm_done", e?.message || e); }
+          logger.info("LLM done for session", session.id);
         } catch (err) {
-          console.error("LLM streaming failed for session", session.id, err?.message || err);
-          // Inform client and continue — keep server alive
+          logger.error("LLM streaming failed for session", session.id, err?.message || err);
+
           try {
-            ws.send(JSON.stringify({ type: "llm_token", text: "[error]" }));
-            ws.send(JSON.stringify({ type: "llm_done" }));
+            ws.send(JSON.stringify({ type: "llm_token", text: "[error]", ts: Date.now() }));
+            ws.send(JSON.stringify({ type: "llm_done", ts: Date.now() }));
           } catch (e) {
-            console.warn("Failed to notify client of LLM error:", e?.message || e);
+            logger.warn("Failed to notify client of LLM error:", e?.message || e);
           }
         }
 
         try {
           await streamTTS(assistantText, (audio) => ws.send(audio));
         } catch (e) {
-          console.warn("TTS streaming failed:", e?.message || e);
+          logger.warn("TTS streaming failed:", e?.message || e);
         }
 
         session.finalTranscript = null;
@@ -261,7 +271,7 @@ wss.on("connection", (ws) => {
     try {
       session.dgConnection?.finish?.();
     } catch (e) {
-      // ignore
+
     }
     sessions.delete(session.id);
     let reasonText = "";
@@ -270,11 +280,11 @@ wss.on("connection", (ws) => {
     } catch (e) {
       reasonText = "<unserializable>";
     }
-    console.log("Client disconnected:", session.id, "code:", code, "reason:", reasonText);
+    logger.info("Client disconnected:", session.id, "code:", code, "reason:", reasonText);
   });
 });
 
-// Periodic ping to detect dead clients and keep intermediate proxies alive
+
 const wsInterval = setInterval(() => {
   wss.clients.forEach((client) => {
     if (client.isAlive === false) return client.terminate();
@@ -282,7 +292,7 @@ const wsInterval = setInterval(() => {
     try {
       client.ping(noop);
     } catch (err) {
-      // ignore ping errors
+
     }
   });
 }, WS_HEARTBEAT_MS);
@@ -290,7 +300,7 @@ const wsInterval = setInterval(() => {
 process.on("exit", () => clearInterval(wsInterval));
 
 
-//  METRICS
+
 
 app.get("/metrics", (_, res) => {
   res.json([...sessions.values()].map(s => ({
@@ -311,17 +321,17 @@ app.get("/health", (_, res) => {
 });
 
 
-// trigger a lightweight prewarm of external providers (LLM / TTS)
+
 app.post("/prewarm", async (req, res) => {
   try {
-    // do not block startup indefinitely — run prewarm with timeout
+
     const tasks = [];
     if (typeof prewarmLLM === "function") tasks.push(prewarmLLM());
     if (typeof prewarmTTS === "function") tasks.push(prewarmTTS());
 
     await Promise.race([
       Promise.all(tasks),
-      new Promise((r) => setTimeout(r, 5000)), // 5s cap
+      new Promise((r) => setTimeout(r, 5000)), 
     ]);
 
     res.json({ warmed: true });
@@ -337,7 +347,7 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Optional startup prewarm to reduce first-request latency in hosted environments.
+
 if (process.env.PREWARM_ON_STARTUP === "true") {
   (async () => {
     console.log("PREWARM_ON_STARTUP=true — running prewarm tasks...");
@@ -353,11 +363,8 @@ if (process.env.PREWARM_ON_STARTUP === "true") {
   })();
 }
 
-// Optional periodic prewarm to reduce impact of idle sleeps. When hosted on
-// platforms that suspend idle services, an external uptime ping (UptimeRobot,
-// cron, etc.) targeting /prewarm is more reliable. This periodic prewarm helps
-// for short idle windows.
-const PREWARM_INTERVAL_MS = parseInt(process.env.PREWARM_INTERVAL_MS || "900000", 10); // default 15m
+
+const PREWARM_INTERVAL_MS = parseInt(process.env.PREWARM_INTERVAL_MS || "900000", 10); 
 if (process.env.ENABLE_PERIODIC_PREWARM === "true") {
   setInterval(() => {
     (async () => {

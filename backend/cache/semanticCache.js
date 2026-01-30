@@ -1,10 +1,7 @@
-// semantic cache (in-memory)
-
 const cache = [];
-const TTL_MS = 5 * 60 * 1000; // 5 minutes
+const TTL_MS = 5 * 60 * 1000;
 const SIMILARITY_THRESHOLD = 0.85;
 
-// cosine similarity
 function cosineSimilarity(a, b) {
   let dot = 0;
   let normA = 0;

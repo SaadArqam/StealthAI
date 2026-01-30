@@ -1,12 +1,14 @@
 const groqModule = require("./groq");
 const streamLLMResponse = groqModule.streamLLMResponse;
 
+const logger = require('../logger');
+
 async function streamLLMWithFallback(prompt, onToken) {
   try {
-    console.log("LLM: using Groq");
+    logger.info("LLM: using Groq");
     await streamLLMResponse(prompt, onToken);
   } catch (err) {
-    console.error("Groq failed, falling back:", err.message);
+    logger.warn("Groq failed, falling back:", err.message);
 
 
     if (process.env.OPENAI_API_KEY) {
@@ -35,7 +37,6 @@ async function streamLLMWithFallback(prompt, onToken) {
 }
 
 async function prewarmLLM() {
-  // Try groq prewarm if available
   if (typeof groqModule.prewarm === "function") {
     try {
       await groqModule.prewarm();
@@ -45,8 +46,6 @@ async function prewarmLLM() {
       console.warn("LLM prewarm: Groq prewarm failed:", err?.message || err);
     }
   }
-
-  // Try OpenAI lightweight warmup if available
   if (process.env.OPENAI_API_KEY) {
     try {
       const OpenAI = require("openai");
@@ -64,7 +63,6 @@ async function prewarmLLM() {
     }
   }
 
-  // otherwise nothing to prewarm (mock)
   console.log("LLM prewarm: no provider to prewarm (mock or no keys)");
 }
 

@@ -10,7 +10,8 @@ if (process.env.DEEPGRAM_API_KEY) {
     deepgram = null;
   }
 } else {
-  console.warn("DEEPGRAM_API_KEY not found — using mock TTS for local testing.");
+  const logger = require('../logger');
+  logger.warn("DEEPGRAM_API_KEY not found — using mock TTS for local testing.");
 }
 
 function generateSinePCM(durationMs = 800, sampleRate = 16000) {
@@ -44,11 +45,12 @@ async function streamTTS(text, onAudioChunk) {
 
       return;
     } catch (err) {
-      console.warn("Deepgram TTS failed, falling back to mock TTS:", err?.message || err);
-      // fall through to mock below
+      const logger = require('../logger');
+      logger.warn("Deepgram TTS failed, falling back to mock TTS:", err?.message || err);
     }
   } else if (deepgram) {
-    console.warn("Deepgram client present but speak.stream is not available — using mock TTS fallback.");
+    const logger = require('../logger');
+    logger.warn("Deepgram client present but speak.stream is not available — using mock TTS fallback.");
   }
 
 
@@ -68,7 +70,6 @@ async function prewarmTTS() {
 
   if (deepgram.speak && typeof deepgram.speak.stream === "function") {
     try {
-      // Fire a very small TTS request and discard audio quickly to warm the service.
       const stream = await deepgram.speak.stream({
         text: "hello",
         model: "aura-asteria-en",
@@ -76,22 +77,24 @@ async function prewarmTTS() {
         sample_rate: 16000,
       });
 
-      // consume a few messages then return
+      
       let i = 0;
       for await (const msg of stream) {
         i++;
         if (i > 2) break;
       }
-      console.log("TTS prewarm completed");
+        const logger = require('../logger');
+        logger.info("TTS prewarm completed");
       return;
-    } catch (err) {
-      console.warn("TTS prewarm failed:", err?.message || err);
-    }
+      } catch (err) {
+        const logger = require('../logger');
+        logger.warn("TTS prewarm failed:", err?.message || err);
+      }
   }
-
-  // fallback: generate a small PCM buffer to warm local path
+  
   generateSinePCM(200, 16000);
-  console.log("TTS prewarm: performed local PCM warmup");
+  const logger = require('../logger');
+  logger.info("TTS prewarm: performed local PCM warmup");
 }
 
 module.exports.prewarm = prewarmTTS;

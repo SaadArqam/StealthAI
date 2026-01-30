@@ -1,6 +1,7 @@
+const logger = require('../logger');
 
 if (!process.env.GROQ_API_KEY) {
-  console.warn("GROQ_API_KEY not found — using mock LLM response for local testing.");
+  logger.warn("GROQ_API_KEY not found — using mock LLM response for local testing.");
 
   async function streamLLMResponse(prompt, onToken) {
     const tokens = ["Hello from the mock LLM.", " I can answer your question."];
@@ -12,9 +13,6 @@ if (!process.env.GROQ_API_KEY) {
 
   module.exports = { streamLLMResponse };
   async function prewarm() {
-    // No-op when using real Groq since the module will be loaded and ready.
-    // We avoid making heavy calls here by default; callers can choose to
-    // perform a small warm call if desired.
     return;
   }
 
@@ -54,7 +52,6 @@ if (!process.env.GROQ_API_KEY) {
   module.exports = { streamLLMResponse };
   async function prewarm() {
     try {
-      // Make a tiny, non-streaming completion to warm the connection.
       await groq.chat.completions.create({
         model: "llama-3.1-8b-instant",
         messages: [
@@ -65,7 +62,7 @@ if (!process.env.GROQ_API_KEY) {
         stream: false,
       });
     } catch (err) {
-      console.warn("Groq prewarm failed:", err?.message || err);
+      logger.warn("Groq prewarm failed:", err?.message || err);
     }
   }
 

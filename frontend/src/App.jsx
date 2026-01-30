@@ -29,7 +29,7 @@ export default function App() {
   const [partialText, setPartialText] = useState("");
   const [messages, setMessages] = useState([]);
 
-  // audio playback (PCM) - define before effects so hooks/closures can call them
+
   async function playAudio() {
     if (!outputContextRef.current) return;
     if (outputContextRef.current.state === "suspended") {
@@ -73,8 +73,8 @@ export default function App() {
     if (currentSourceRef.current) {
       try {
         currentSourceRef.current.stop();
-      } catch {
-        // ignore
+      } catch (err){
+        throw new Error(err)
       }
     }
     isPlayingRef.current = false;
@@ -103,8 +103,7 @@ export default function App() {
       }
     }
 
-    // Build WS URL: prefer explicit VITE_WS_URL in production, otherwise use
-    // same-origin (switch protocol to ws/wss).
+
     const envUrl = import.meta.env.VITE_WS_URL;
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.hostname;
@@ -128,7 +127,7 @@ export default function App() {
 
         if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY * 2) {
           isSpeaking = false;
-          // send user_stopped with turn id so backend can dedupe
+
           try { socketRef.current.send(JSON.stringify({ type: "user_stopped", id: turnIdRef.current })); } catch (e) { void e; }
           turnIdRef.current = null;
           return;
@@ -150,13 +149,13 @@ export default function App() {
 
         if (!isSpeaking) {
           isSpeaking = true;
-          // create a turn id to dedupe multiple stop events
+
           try {
             turnIdRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
           } catch {
             turnIdRef.current = String(Date.now());
           }
-          // notify server this turn has started
+
           try { socketRef.current.send(JSON.stringify({ type: "turn_start", id: turnIdRef.current })); } catch (e) { void e; }
 
           if (agentStateRef.current === "SPEAKING") {
@@ -171,7 +170,7 @@ export default function App() {
 
       outputContextRef.current = new AudioContext({ sampleRate: 16000 });
 
-      // initialize socket after audio is ready
+
       initSocket();
     }
 
@@ -216,7 +215,21 @@ export default function App() {
           setPartialText("");
         }
 
+        if (msg.type === "llm_started") {
+
+          console.debug("LLM started on server at", new Date(msg.ts).toISOString());
+        }
+
         if (msg.type === "llm_token") {
+
+          try {
+            if (msg.ts) {
+              const latencyMs = Date.now() - msg.ts;
+              console.debug(`llm_token idx=${msg.index} latency=${latencyMs}ms`, msg.text);
+            }
+          } catch (e) { void e; }
+
+
           setMessages((prev) => {
             const last = prev[prev.length - 1];
             if (last && last.role === "assistant") {
@@ -236,7 +249,7 @@ export default function App() {
 
       socket.onclose = (ev) => {
         console.warn("WebSocket closed", ev.code, ev.reason, ev.wasClean);
-        // schedule reconnect
+
         scheduleReconnect();
       };
     }
@@ -244,12 +257,12 @@ export default function App() {
     init();
 
     return () => {
-      // cleanup reconnect timer if component unmounts
+
       clearReconnect();
       try {
         socketRef.current?.close();
       } catch (e) {
-        // ignore close errors during unmount
+
         void e;
       }
     };

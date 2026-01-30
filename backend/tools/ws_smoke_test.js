@@ -30,7 +30,7 @@ async function run() {
 
   ws.on('message', (m) => {
     try {
-      // try parse JSON
+      
       const s = m.toString();
       try { const j = JSON.parse(s); console.log('RECV JSON:', j); return; } catch(e) {}
       console.log('RECV BIN', m.length);
@@ -38,8 +38,7 @@ async function run() {
       console.log('RECV (err)', e);
     }
   });
-
-  // wait a bit to receive session id/state
+  
   await wait(300);
 
   const turnId = 'smoke-' + Date.now();
@@ -56,7 +55,6 @@ async function run() {
   console.log('Sending user_stopped (2)');
   ws.send(JSON.stringify({ type: 'user_stopped', id: turnId }));
 
-  // wait for responses
   await wait(2000);
 
   ws.close();
