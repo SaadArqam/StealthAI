@@ -13,11 +13,12 @@ function floatTo16BitPCM(float32Array) {
 }
 
 export default function App() {
-  const TURN_END_DELAY = 800;
-  const NOISE_THRESHOLD = 0.0002;
+  const TURN_END_DELAY = 500;
+  const NOISE_THRESHOLD = 0.0006;
 
   const socketRef = useRef(null);
   const agentStateRef = useRef("LISTENING");
+  const turnIdRef = useRef(null);
 
   const outputContextRef = useRef(null);
   const playbackQueueRef = useRef([]);
@@ -28,112 +29,9 @@ export default function App() {
   const [partialText, setPartialText] = useState("");
   const [messages, setMessages] = useState([]);
 
-  useEffect(() => {
-    let isSpeaking = false;
-    let lastSpeechTime = 0;
-
-    async function init() {
-      const socket = new WebSocket(
-        import.meta.env.PROD
-          ? import.meta.env.VITE_WS_URL
-          : "ws://localhost:8080",
-      );
-
-      socket.binaryType = "arraybuffer";
-      socketRef.current = socket;
-
-      socket.onopen = () => {
-        console.log("WebSocket connected");
-      };
-
-      socket.onmessage = (event) => {
-        if (event.data instanceof ArrayBuffer) {
-          playbackQueueRef.current.push(event.data);
-          if (!isPlayingRef.current) playAudio();
-          return;
-        }
-
-        const msg = JSON.parse(event.data);
-
-        if (msg.type === "state") {
-          agentStateRef.current = msg.value;
-          setAgentState(msg.value);
-        }
-
-        if (msg.type === "transcript_partial") {
-          setPartialText(msg.text);
-        }
-
-        if (msg.type === "transcript_final") {
-          setMessages((prev) => [...prev, { role: "user", text: msg.text }]);
-          setPartialText("");
-        }
-
-        if (msg.type === "llm_token") {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === "assistant") {
-              return [
-                ...prev.slice(0, -1),
-                { role: "assistant", text: last.text + msg.text },
-              ];
-            }
-            return [...prev, { role: "assistant", text: msg.text }];
-          });
-        }
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioContext = new AudioContext({ sampleRate: 16000 });
-
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-
-      processor.onaudioprocess = (event) => {
-        const now = performance.now();
-
-        if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY * 2) {
-          isSpeaking = false;
-          socketRef.current.send(JSON.stringify({ type: "user_stopped" }));
-          return;
-        }
-
-        if (
-          socketRef.current.readyState !== WebSocket.OPEN ||
-          agentStateRef.current !== "LISTENING"
-        ) {
-          return;
-        }
-
-        const input = event.inputBuffer.getChannelData(0);
-
-        let sum = 0;
-        for (let i = 0; i < input.length; i++) sum += Math.abs(input[i]);
-        const energy = sum / input.length;
-        if (energy < NOISE_THRESHOLD) return;
-
-        if (!isSpeaking) {
-          isSpeaking = true;
-          if (agentStateRef.current === "SPEAKING") {
-            stopPlayback();
-            socketRef.current.send(JSON.stringify({ type: "barge_in" }));
-          }
-        }
-
-        lastSpeechTime = now;
-        socketRef.current.send(floatTo16BitPCM(input));
-      };
-
-      outputContextRef.current = new AudioContext({ sampleRate: 16000 });
-    }
-
-    init();
-  }, []);
-
+  // audio playback (PCM) - define before effects so hooks/closures can call them
   async function playAudio() {
+    if (!outputContextRef.current) return;
     if (outputContextRef.current.state === "suspended") {
       await outputContextRef.current.resume();
     }
@@ -169,15 +67,194 @@ export default function App() {
     isPlayingRef.current = false;
   }
 
+
   function stopPlayback() {
     playbackQueueRef.current.length = 0;
     if (currentSourceRef.current) {
       try {
         currentSourceRef.current.stop();
-      } catch {}
+      } catch {
+        // ignore
+      }
     }
     isPlayingRef.current = false;
   }
+
+  useEffect(() => {
+    let isSpeaking = false;
+    let lastSpeechTime = 0;
+    let reconnectAttempts = 0;
+    let reconnectTimer = null;
+
+    function scheduleReconnect() {
+      reconnectAttempts += 1;
+      const backoff = Math.min(30000, 500 * Math.pow(2, reconnectAttempts));
+      console.warn(`WS: scheduling reconnect in ${backoff}ms (attempt ${reconnectAttempts})`);
+      reconnectTimer = setTimeout(() => {
+        initSocket();
+      }, backoff);
+    }
+
+    function clearReconnect() {
+      reconnectAttempts = 0;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    }
+
+    // Build WS URL: prefer explicit VITE_WS_URL in production, otherwise use
+    // same-origin (switch protocol to ws/wss).
+    const envUrl = import.meta.env.VITE_WS_URL;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.hostname;
+    const portPart = window.location.port ? ":" + window.location.port : "";
+    const defaultUrl = `${proto}//${host}${portPart}`;
+
+    async function init() {
+      // audio + mic setup
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      processor.onaudioprocess = (event) => {
+        const now = performance.now();
+
+        if (isSpeaking && now - lastSpeechTime > TURN_END_DELAY * 2) {
+          isSpeaking = false;
+          // send user_stopped with turn id so backend can dedupe
+          try { socketRef.current.send(JSON.stringify({ type: "user_stopped", id: turnIdRef.current })); } catch (e) { void e; }
+          turnIdRef.current = null;
+          return;
+        }
+
+        if (
+          socketRef.current.readyState !== WebSocket.OPEN ||
+          agentStateRef.current !== "LISTENING"
+        ) {
+          return;
+        }
+
+        const input = event.inputBuffer.getChannelData(0);
+
+        let sum = 0;
+        for (let i = 0; i < input.length; i++) sum += Math.abs(input[i]);
+        const energy = sum / input.length;
+        if (energy < NOISE_THRESHOLD) return;
+
+        if (!isSpeaking) {
+          isSpeaking = true;
+          // create a turn id to dedupe multiple stop events
+          try {
+            turnIdRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+          } catch {
+            turnIdRef.current = String(Date.now());
+          }
+          // notify server this turn has started
+          try { socketRef.current.send(JSON.stringify({ type: "turn_start", id: turnIdRef.current })); } catch (e) { void e; }
+
+          if (agentStateRef.current === "SPEAKING") {
+            stopPlayback();
+            try { socketRef.current.send(JSON.stringify({ type: "barge_in", id: turnIdRef.current })); } catch (e) { void e; }
+          }
+        }
+
+        lastSpeechTime = now;
+        socketRef.current.send(floatTo16BitPCM(input));
+      };
+
+      outputContextRef.current = new AudioContext({ sampleRate: 16000 });
+
+      // initialize socket after audio is ready
+      initSocket();
+    }
+
+    function initSocket() {
+      const socket = new WebSocket(import.meta.env.PROD ? (envUrl || defaultUrl) : "ws://localhost:3000");
+      socket.binaryType = "arraybuffer";
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        console.log("WebSocket connected");
+        clearReconnect();
+      };
+
+      socket.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          playbackQueueRef.current.push(event.data);
+          if (!isPlayingRef.current) playAudio();
+          return;
+        }
+
+        let parsed = null;
+        try {
+          parsed = JSON.parse(event.data);
+        } catch (err) {
+          console.warn("WS: failed to parse message as JSON:", err, event.data);
+          return;
+        }
+
+        const msg = parsed;
+
+        if (msg.type === "state") {
+          agentStateRef.current = msg.value;
+          setAgentState(msg.value);
+        }
+
+        if (msg.type === "transcript_partial") {
+          setPartialText(msg.text);
+        }
+
+        if (msg.type === "transcript_final") {
+          setMessages((prev) => [...prev, { role: "user", text: msg.text }]);
+          setPartialText("");
+        }
+
+        if (msg.type === "llm_token") {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === "assistant") {
+              return [
+                ...prev.slice(0, -1),
+                { role: "assistant", text: last.text + msg.text },
+              ];
+            }
+            return [...prev, { role: "assistant", text: msg.text }];
+          });
+        }
+      };
+
+      socket.onerror = (err) => {
+        console.error("WebSocket error:", err);
+      };
+
+      socket.onclose = (ev) => {
+        console.warn("WebSocket closed", ev.code, ev.reason, ev.wasClean);
+        // schedule reconnect
+        scheduleReconnect();
+      };
+    }
+
+    init();
+
+    return () => {
+      // cleanup reconnect timer if component unmounts
+      clearReconnect();
+      try {
+        socketRef.current?.close();
+      } catch (e) {
+        // ignore close errors during unmount
+        void e;
+      }
+    };
+  }, []);
+  
 
   return (
   <div className="app">
@@ -191,7 +268,12 @@ export default function App() {
     <main className="chat-wrapper">
       {messages.length === 0 && (
         <div className="empty-state">
-          <div className={`mic ${agentState.toLowerCase()}`} />
+          <div className={`alexa-sphere ${agentState.toLowerCase()}`}>
+  <div className="ring ring-1" />
+  <div className="ring ring-2" />
+  <div className="ring ring-3" />
+</div>
+
           {agentState === "LISTENING" && (
             <p>🎙️ Speak your thoughts…</p>
           )}

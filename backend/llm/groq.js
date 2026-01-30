@@ -11,6 +11,14 @@ if (!process.env.GROQ_API_KEY) {
   }
 
   module.exports = { streamLLMResponse };
+  async function prewarm() {
+    // No-op when using real Groq since the module will be loaded and ready.
+    // We avoid making heavy calls here by default; callers can choose to
+    // perform a small warm call if desired.
+    return;
+  }
+
+  module.exports.prewarm = prewarm;
 } else {
   const Groq = require("groq-sdk");
 
@@ -44,4 +52,22 @@ if (!process.env.GROQ_API_KEY) {
   }
 
   module.exports = { streamLLMResponse };
+  async function prewarm() {
+    try {
+      // Make a tiny, non-streaming completion to warm the connection.
+      await groq.chat.completions.create({
+        model: "llama-3.1-8b-instant",
+        messages: [
+          { role: "system", content: "You are a warmup bot." },
+          { role: "user", content: "Hi" },
+        ],
+        max_tokens: 1,
+        stream: false,
+      });
+    } catch (err) {
+      console.warn("Groq prewarm failed:", err?.message || err);
+    }
+  }
+
+  module.exports.prewarm = prewarm;
 }

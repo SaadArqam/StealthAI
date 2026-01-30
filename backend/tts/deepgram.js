@@ -62,3 +62,36 @@ async function streamTTS(text, onAudioChunk) {
 }
 
 module.exports = { streamTTS };
+
+async function prewarmTTS() {
+  if (!deepgram) return;
+
+  if (deepgram.speak && typeof deepgram.speak.stream === "function") {
+    try {
+      // Fire a very small TTS request and discard audio quickly to warm the service.
+      const stream = await deepgram.speak.stream({
+        text: "hello",
+        model: "aura-asteria-en",
+        encoding: "linear16",
+        sample_rate: 16000,
+      });
+
+      // consume a few messages then return
+      let i = 0;
+      for await (const msg of stream) {
+        i++;
+        if (i > 2) break;
+      }
+      console.log("TTS prewarm completed");
+      return;
+    } catch (err) {
+      console.warn("TTS prewarm failed:", err?.message || err);
+    }
+  }
+
+  // fallback: generate a small PCM buffer to warm local path
+  generateSinePCM(200, 16000);
+  console.log("TTS prewarm: performed local PCM warmup");
+}
+
+module.exports.prewarm = prewarmTTS;

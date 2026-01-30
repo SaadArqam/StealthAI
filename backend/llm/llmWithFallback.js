@@ -1,4 +1,5 @@
-const { streamLLMResponse } = require("./groq");
+const groqModule = require("./groq");
+const streamLLMResponse = groqModule.streamLLMResponse;
 
 async function streamLLMWithFallback(prompt, onToken) {
   try {
@@ -33,4 +34,38 @@ async function streamLLMWithFallback(prompt, onToken) {
   }
 }
 
-module.exports = { streamLLMWithFallback };
+async function prewarmLLM() {
+  // Try groq prewarm if available
+  if (typeof groqModule.prewarm === "function") {
+    try {
+      await groqModule.prewarm();
+      console.log("LLM prewarm: Groq prewarm completed");
+      return;
+    } catch (err) {
+      console.warn("LLM prewarm: Groq prewarm failed:", err?.message || err);
+    }
+  }
+
+  // Try OpenAI lightweight warmup if available
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const OpenAI = require("openai");
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 1,
+        stream: false,
+      });
+      console.log("LLM prewarm: OpenAI prewarm completed");
+      return;
+    } catch (err) {
+      console.warn("LLM prewarm: OpenAI prewarm failed:", err?.message || err);
+    }
+  }
+
+  // otherwise nothing to prewarm (mock)
+  console.log("LLM prewarm: no provider to prewarm (mock or no keys)");
+}
+
+module.exports = { streamLLMWithFallback, prewarmLLM };
